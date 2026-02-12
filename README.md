@@ -74,24 +74,50 @@ The script will:
 
 If you prefer to deploy manually:
 
-1. Build the Docker image:
+1. Set environment variables:
    ```bash
-   docker build -t gcr.io/${PROJECT_ID}/foamapppppp .
+   export PROJECT_ID=your-gcp-project-id
+   export REGION=us-central1
+   export SERVICE_NAME=foamapppppp
    ```
 
-2. Push to Google Container Registry:
+2. Enable required APIs:
    ```bash
-   docker push gcr.io/${PROJECT_ID}/foamapppppp
+   gcloud services enable cloudbuild.googleapis.com run.googleapis.com artifactregistry.googleapis.com
    ```
 
-3. Deploy to Cloud Run:
+3. Create Artifact Registry repository:
    ```bash
-   gcloud run deploy foamapppppp \
-     --image gcr.io/${PROJECT_ID}/foamapppppp \
+   gcloud artifacts repositories create ${SERVICE_NAME} \
+     --repository-format=docker \
+     --location=${REGION} \
+     --project=${PROJECT_ID}
+   ```
+
+4. Configure Docker authentication:
+   ```bash
+   gcloud auth configure-docker ${REGION}-docker.pkg.dev
+   ```
+
+5. Build the Docker image:
+   ```bash
+   docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/${SERVICE_NAME}/${SERVICE_NAME}:latest .
+   ```
+
+6. Push to Artifact Registry:
+   ```bash
+   docker push ${REGION}-docker.pkg.dev/${PROJECT_ID}/${SERVICE_NAME}/${SERVICE_NAME}:latest
+   ```
+
+7. Deploy to Cloud Run:
+   ```bash
+   gcloud run deploy ${SERVICE_NAME} \
+     --image=${REGION}-docker.pkg.dev/${PROJECT_ID}/${SERVICE_NAME}/${SERVICE_NAME}:latest \
      --platform managed \
-     --region us-central1 \
+     --region ${REGION} \
      --allow-unauthenticated \
-     --port 8080
+     --port 8080 \
+     --project ${PROJECT_ID}
    ```
 
 ### Configuration
