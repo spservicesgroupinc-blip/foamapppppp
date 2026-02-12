@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Foam Crm PRO",
+  "description": "Professional estimation, CRM, and inventory management for spray foam insulation contractors.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
