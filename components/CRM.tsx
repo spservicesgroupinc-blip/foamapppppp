@@ -194,6 +194,19 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
                     <Plus className="w-4 h-4" /> New Estimate
                   </button>
                 )}
+                {onGeneratePDF && customerEstimates.length > 0 && (() => {
+                  const latestEst = customerEstimates.reduce((a, b) => new Date(b.date) > new Date(a.date) ? b : a);
+                  const docType = statusToDocumentType(latestEst.status);
+                  const pdfLabel = docType === DocumentType.INVOICE ? 'Invoice' : docType === DocumentType.WORK_ORDER ? 'Work Order' : 'Estimate';
+                  return (
+                    <button
+                      onClick={() => onGeneratePDF(latestEst.id)}
+                      className="mt-2 bg-gradient-to-r from-blue-600 to-brand-600 hover:from-blue-700 hover:to-brand-700 text-white text-sm px-4 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-1.5 ml-auto"
+                    >
+                      <FileDown className="w-4 h-4" /> Generate {pdfLabel} PDF
+                    </button>
+                  );
+                })()}
                 {onDeleteCustomer && (
                   <button
                     onClick={() => {

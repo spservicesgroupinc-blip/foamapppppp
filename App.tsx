@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Calculator as CalculatorIcon, 
@@ -6,10 +6,8 @@ import {
   Users, 
   Package, 
   Settings as SettingsIcon,
-  Menu,
   X,
   FileDown,
-  Printer,
   Plus,
   UserPlus,
   Download,
@@ -915,6 +913,24 @@ const AppContent: React.FC = () => {
                    className="flex items-center gap-2 bg-white text-slate-700 px-5 py-3 rounded-full shadow-xl border border-slate-100 font-bold hover:bg-slate-50 w-48 justify-center"
                 >
                   <CalculatorIcon className="w-5 h-5 text-brand-500" /> New Estimate
+                </button>
+                <button 
+                   onClick={() => {
+                     // Open PDF for the most recent estimate, or navigate to jobs to pick one
+                     const latestEst = estimates.length > 0
+                       ? estimates.reduce((a, b) => new Date(b.date) > new Date(a.date) ? b : a)
+                       : null;
+                     if (latestEst) {
+                       setPdfDocumentType(statusToDocumentType(latestEst.status));
+                       setPdfEstimateId(latestEst.id);
+                       setShowQuickActions(false);
+                     } else {
+                       navigateTo('jobs');
+                     }
+                   }}
+                   className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-brand-600 text-white px-5 py-3 rounded-full shadow-xl border border-blue-400 font-bold hover:from-blue-700 hover:to-brand-700 w-48 justify-center"
+                >
+                  <FileDown className="w-5 h-5" /> Generate PDF
                 </button>
              </div>
            )}
