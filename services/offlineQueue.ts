@@ -155,7 +155,9 @@ export const processQueue = async (
       }
 
       // Attempt to sync
-      await syncFn(op.data);
+      // For delete operations, pass just the ID; for save operations, pass the entire data
+      const syncData = op.operation === 'delete' ? (typeof op.data === 'string' ? op.data : op.data.id) : op.data;
+      await syncFn(syncData);
       console.log(`[OfflineQueue] Successfully synced: ${op.id}`);
       successCount++;
       
