@@ -65,18 +65,20 @@ const AppContent: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [dataLoading, setDataLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(false); // Changed to false - no blocking
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [estimates, setEstimates] = useState<Estimate[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [lastUpdate, setLastUpdate] = useState(Date.now()); // Trigger re-renders
-  const [isSyncing, setIsSyncing] = useState(false); // Background sync indicator (no blocking)
+  const [isSyncing, setIsSyncing] = useState(false); // Background sync indicator (non-blocking)
   const initialLoadDone = useRef(false);
   const [jobsFilter, setJobsFilter] = useState('All'); // Lifted from JobsList to prevent reset
   const recentOptimisticIds = useRef<Set<string>>(new Set()); // Suppress realtime for recently-updated items
   const [pdfEstimateId, setPdfEstimateId] = useState<string | null>(null); // PDF modal target
   const [pdfDocumentType, setPdfDocumentType] = useState<DocumentType | undefined>(undefined); // Optional override
+  const [isOnline, setIsOnline] = useState(navigator.onLine); // Network status
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null); // Track load errors
 
   // --- Supabase Auth Listener ---
   useEffect(() => {
@@ -112,48 +114,100 @@ const AppContent: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- Effects ---
-  // Load data from Supabase when lastUpdate changes or user logs in
-  // First load shows a loading spinner; subsequent refreshes sync silently in background
+  // --- Network Status Monitor ---
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      showToast('Connection restored', 'success');
+      // Trigger data refresh when coming back online
+      if (user) {
+        setLastUpdate(Date.now());
+      }
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      showToast('Working offline - changes will sync when connected', 'info');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [user, showToast]);
+
+  // --- Progressive Data Loading ---
+  // Load data in background without blocking UI render
+  // Critical data (settings) loads first, then customers/estimates in parallel, then inventory
   useEffect(() => {
     if (!user) {
-      setDataLoading(false);
       return;
     }
     let cancelled = false;
     const isFirstLoad = !initialLoadDone.current;
-    const loadData = async () => {
-      if (isFirstLoad) {
-        setDataLoading(true);
-      } else {
-        setIsSyncing(true); // silent background indicator
+    
+    const loadDataWithRetry = async <T,>(
+      loadFn: () => Promise<T>,
+      retries = 3,
+      delay = 1000
+    ): Promise<T> => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          return await loadFn();
+        } catch (err) {
+          if (i === retries - 1) throw err;
+          await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
+        }
       }
+      throw new Error('Max retries exceeded');
+    };
+
+    const loadData = async () => {
+      setIsSyncing(true);
+      setDataLoadError(null);
+      
       try {
-        const [c, e, i, s] = await Promise.all([
-          getCustomers(),
-          getEstimates(),
-          getInventory(),
-          getSettings(),
+        // Phase 1: Load settings first (critical for app config)
+        const s = await loadDataWithRetry(getSettings);
+        if (!cancelled) {
+          setSettings(s);
+        }
+
+        // Phase 2: Load customers and estimates in parallel (user needs these immediately)
+        const [c, e] = await Promise.all([
+          loadDataWithRetry(getCustomers),
+          loadDataWithRetry(getEstimates),
         ]);
         if (!cancelled) {
           setCustomers(c);
           setEstimates(e);
+        }
+
+        // Phase 3: Load inventory in background (less critical, can load later)
+        const i = await loadDataWithRetry(getInventory);
+        if (!cancelled) {
           setInventory(i);
-          setSettings(s);
           initialLoadDone.current = true;
         }
       } catch (err) {
         console.error('Failed to load data:', err);
+        const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+        setDataLoadError(errorMsg);
+        if (!isFirstLoad) {
+          showToast('Sync error - using cached data', 'error');
+        }
       } finally {
         if (!cancelled) {
-          setDataLoading(false);
           setIsSyncing(false);
         }
       }
     };
+    
     loadData();
     return () => { cancelled = true; };
-  }, [lastUpdate, user]);
+  }, [lastUpdate, user, showToast]);
 
   // --- Supabase Realtime Subscriptions ---
   // Listen for changes to ALL tables and merge them into local state in real-time
@@ -238,12 +292,25 @@ const AppContent: React.FC = () => {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Handle subscription status changes
+        if (status === 'SUBSCRIBED') {
+          console.log('Realtime subscriptions active');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Realtime subscription error');
+          showToast('Live updates paused - refresh to reconnect', 'error');
+        } else if (status === 'TIMED_OUT') {
+          console.error('Realtime subscription timed out');
+          showToast('Connection timeout - trying to reconnect...', 'error');
+        } else if (status === 'CLOSED') {
+          console.log('Realtime subscription closed');
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user, showToast]);
 
   // Mapper helpers for realtime payloads (mirrors storage.ts mappers)
   const mapInventoryPayload = (row: any): InventoryItem => ({
@@ -786,7 +853,7 @@ const AppContent: React.FC = () => {
        </div>
     </div>
   );
-  
+
   // Mobile uses slightly different styling
   const BrandLogoMobile = () => (
     <div className="flex items-center gap-2 select-none">
@@ -799,7 +866,8 @@ const AppContent: React.FC = () => {
     </div>
   );
 
-  if (authLoading || (user && dataLoading)) {
+  // Only show loading during auth check - data loads in background
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-white text-lg">Loading...</div>
@@ -879,11 +947,27 @@ const AppContent: React.FC = () => {
           <header className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-30">
             <BrandLogoMobile />
             <div className="flex items-center gap-2">
-              {isSyncing && (
+              {!isOnline && (
+                <div className="flex items-center gap-1.5 text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded-full">
+                  <div className="w-2 h-2 bg-orange-600 rounded-full animate-pulse" />
+                  <span className="font-medium">Offline</span>
+                </div>
+              )}
+              {isSyncing && isOnline && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-400 animate-pulse">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   <span>Syncing</span>
                 </div>
+              )}
+              {dataLoadError && (
+                <button 
+                  onClick={() => setLastUpdate(Date.now())}
+                  className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full hover:bg-red-100"
+                  title="Click to retry"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span className="font-medium">Retry</span>
+                </button>
               )}
               <button 
                 onClick={() => navigateTo('settings')}
