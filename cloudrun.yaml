@@ -1,0 +1,39 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: foamapppppp
+  labels:
+    cloud.googleapis.com/location: us-central1
+spec:
+  template:
+    metadata:
+      annotations:
+        # Container scaling settings
+        autoscaling.knative.dev/minScale: '0'
+        autoscaling.knative.dev/maxScale: '10'
+        # CPU allocation
+        run.googleapis.com/cpu-throttling: 'true'
+        # Execution environment
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+      - image: REGION-docker.pkg.dev/PROJECT-ID/REPOSITORY/foamapppppp:TAG
+        ports:
+        - name: http1
+          containerPort: 8080
+        resources:
+          limits:
+            cpu: '1'
+            memory: 512Mi
+        env:
+        # Add environment variables here
+        # - name: GEMINI_API_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       key: latest
+        #       name: gemini-api-key
+  traffic:
+  - percent: 100
+    latestRevision: true
