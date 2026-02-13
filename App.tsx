@@ -25,11 +25,12 @@ import Auth from './components/Auth';
 import PDFPreviewModal from './components/PDFPreviewModal';
 import { ToastProvider, useToast } from './components/Toast';
 import { NAV_ITEMS } from './constants';
-import { getCustomers, getEstimates, getInventory, getSettings, saveEstimate, saveFullInventory, deleteEstimate, deleteCustomer } from './services/storage';
+import { getCustomers, getEstimates, getInventory, getSettings, saveEstimate, saveFullInventory, deleteEstimate, deleteCustomer, saveCustomer, saveSettings } from './services/storage';
 import { DEFAULT_SETTINGS } from './constants';
 import { supabase } from './services/supabaseClient';
 import { JobStatus, Estimate, User, InventoryItem, Customer, AppSettings, DocumentType, statusToDocumentType } from './types';
 import type { Session } from '@supabase/supabase-js';
+import { processQueue, getQueueStatus } from './services/offlineQueue';
 
 // Wrapper to use the hook
 const AppContent: React.FC = () => {
@@ -116,14 +117,46 @@ const AppContent: React.FC = () => {
 
   // --- Network Status Monitor ---
   useEffect(() => {
-    const handleOnline = () => {
+    const handleOnline = async () => {
       setIsOnline(true);
       showToast('Connection restored', 'success');
-      // Trigger data refresh when coming back online
+      
+      // Process offline queue when coming back online
       if (user) {
-        setLastUpdate(Date.now());
+        const queueStatus = getQueueStatus();
+        if (queueStatus.count > 0) {
+          showToast(`Syncing ${queueStatus.count} offline changes...`, 'info');
+          
+          try {
+            const result = await processQueue({
+              saveCustomer,
+              saveEstimate,
+              saveInventory: saveFullInventory,
+              saveSettings,
+              deleteCustomer,
+              deleteEstimate,
+            });
+            
+            if (result.success > 0) {
+              showToast(`Synced ${result.success} offline changes`, 'success');
+              // Refresh data after successful sync
+              setLastUpdate(Date.now());
+            }
+            
+            if (result.failed > 0) {
+              showToast(`Failed to sync ${result.failed} changes`, 'error');
+            }
+          } catch (err) {
+            console.error('Failed to process offline queue:', err);
+            showToast('Some changes failed to sync', 'error');
+          }
+        } else {
+          // No queue, just refresh data
+          setLastUpdate(Date.now());
+        }
       }
     };
+    
     const handleOffline = () => {
       setIsOnline(false);
       showToast('Working offline - changes will sync when connected', 'info');
@@ -980,6 +1013,13 @@ const AppContent: React.FC = () => {
 
           {/* View Content */}
           <div className="flex-1 overflow-y-auto p-4 lg:p-8">
+              {/* Initial Loading Banner */}
+              {!initialLoadDone.current && isSyncing && (
+                <div className="mb-4 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg flex items-center gap-2 animate-pulse">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span className="text-sm font-medium">Loading your data...</span>
+                </div>
+              )}
               {renderContent()}
           </div>
 
