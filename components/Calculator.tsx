@@ -10,7 +10,7 @@ interface CalculatorProps {
   inventory: InventoryItem[];
   preSelectedCustomerId?: string;
   editEstimate?: Estimate | null;
-  onSave: (savedId?: string) => void;
+  onSave: (savedId?: string, customerId?: string) => void;
   onRefresh: () => void;
 }
 
@@ -378,9 +378,9 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
     if (isEditMode) {
       showToast("Estimate Updated Successfully", "success");
     } else {
-      showToast(status === JobStatus.DRAFT ? "Draft Saved" : "Work Order Created", "success");
+      showToast("Estimate Saved", "success");
     }
-    onSave(saved.id);
+    onSave(saved.id, selectedCustomerId);
   };
 
   const addMiscItem = () => {
@@ -931,29 +931,12 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
             )}
 
             <div className="space-y-3">
-              {isEditMode ? (
-                <button 
-                  onClick={() => handleSave(editEstimate!.status)}
-                  className="w-full py-3 bg-brand-600 hover:bg-brand-700 rounded-lg font-medium transition-colors text-white shadow-lg shadow-brand-900/50 flex justify-center items-center gap-2"
-                >
-                  <Save className="w-4 h-4" /> Save Changes
-                </button>
-              ) : (
-                <>
-                  <button 
-                    onClick={() => handleSave(JobStatus.DRAFT)}
-                    className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-medium transition-colors flex justify-center items-center gap-2"
-                  >
-                    <Save className="w-4 h-4" /> Save as Draft
-                  </button>
-                  <button 
-                     onClick={() => handleSave(JobStatus.WORK_ORDER)}
-                    className="w-full py-3 bg-brand-600 hover:bg-brand-700 rounded-lg font-medium transition-colors text-white shadow-lg shadow-brand-900/50"
-                  >
-                    Create Work Order
-                  </button>
-                </>
-              )}
+              <button 
+                onClick={() => handleSave(isEditMode ? editEstimate!.status : JobStatus.DRAFT)}
+                className="w-full py-4 bg-brand-600 hover:bg-brand-700 rounded-lg font-bold text-lg transition-colors text-white shadow-lg shadow-brand-900/50 flex justify-center items-center gap-2 active:scale-[0.98]"
+              >
+                <Save className="w-5 h-5" /> {isEditMode ? 'Save Changes' : 'Save Estimate'}
+              </button>
             </div>
           </div>
         </div>

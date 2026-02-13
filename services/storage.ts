@@ -284,10 +284,26 @@ export const deleteInventoryItem = async (id: string): Promise<void> => {
 };
 
 export const saveFullInventory = async (items: InventoryItem[]): Promise<void> => {
-  // Update each item in the database
-  for (const item of items) {
-    await saveInventoryItem(item);
-  }
+  // Batch upsert: update all items in parallel for instant sync
+  const userId = await getUserId();
+  const promises = items
+    .filter(item => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.id))
+    .map(item =>
+      supabase
+        .from('inventory')
+        .update({
+          name: item.name,
+          category: item.category,
+          quantity: item.quantity,
+          unit: item.unit,
+          min_level: item.minLevel,
+        })
+        .eq('id', item.id)
+    );
+  const results = await Promise.all(promises);
+  results.forEach((r, i) => {
+    if (r.error) console.error('saveFullInventory batch error:', r.error);
+  });
 };
 
 // =============================================

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Calculator as CalculatorIcon, 
@@ -15,7 +15,8 @@ import {
   Download,
   Check,
   ArrowLeft,
-  Pencil
+  Pencil,
+  RefreshCw
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Calculator from './components/Calculator';
@@ -71,6 +72,8 @@ const AppContent: React.FC = () => {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [lastUpdate, setLastUpdate] = useState(Date.now()); // Trigger re-renders
+  const [isSyncing, setIsSyncing] = useState(false); // Background sync indicator (no blocking)
+  const initialLoadDone = useRef(false);
 
   // --- Supabase Auth Listener ---
   useEffect(() => {
@@ -108,14 +111,20 @@ const AppContent: React.FC = () => {
 
   // --- Effects ---
   // Load data from Supabase when lastUpdate changes or user logs in
+  // First load shows a loading spinner; subsequent refreshes sync silently in background
   useEffect(() => {
     if (!user) {
       setDataLoading(false);
       return;
     }
     let cancelled = false;
+    const isFirstLoad = !initialLoadDone.current;
     const loadData = async () => {
-      setDataLoading(true);
+      if (isFirstLoad) {
+        setDataLoading(true);
+      } else {
+        setIsSyncing(true); // silent background indicator
+      }
       try {
         const [c, e, i, s] = await Promise.all([
           getCustomers(),
@@ -128,16 +137,109 @@ const AppContent: React.FC = () => {
           setEstimates(e);
           setInventory(i);
           setSettings(s);
+          initialLoadDone.current = true;
         }
       } catch (err) {
         console.error('Failed to load data:', err);
       } finally {
-        if (!cancelled) setDataLoading(false);
+        if (!cancelled) {
+          setDataLoading(false);
+          setIsSyncing(false);
+        }
       }
     };
     loadData();
     return () => { cancelled = true; };
   }, [lastUpdate, user]);
+
+  // --- Supabase Realtime Subscriptions ---
+  // Listen for changes to estimates and inventory tables and merge them into local state
+  // so that inventory updates appear instantly on mobile without a full reload
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('app-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inventory' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newItem = mapInventoryPayload(payload.new);
+            setInventory(prev => {
+              if (prev.some(i => i.id === newItem.id)) return prev;
+              return [...prev, newItem];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = mapInventoryPayload(payload.new);
+            setInventory(prev => prev.map(i => i.id === updated.id ? updated : i));
+          } else if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as any)?.id;
+            if (oldId) setInventory(prev => prev.filter(i => i.id !== oldId));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'estimates' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newEst = mapEstimatePayload(payload.new);
+            setEstimates(prev => {
+              if (prev.some(e => e.id === newEst.id)) return prev;
+              return [newEst, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = mapEstimatePayload(payload.new);
+            setEstimates(prev => prev.map(e => e.id === updated.id ? updated : e));
+          } else if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as any)?.id;
+            if (oldId) setEstimates(prev => prev.filter(e => e.id !== oldId));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  // Mapper helpers for realtime payloads (mirrors storage.ts mappers)
+  const mapInventoryPayload = (row: any): InventoryItem => ({
+    id: row.id,
+    name: row.name,
+    category: row.category as InventoryItem['category'],
+    quantity: Number(row.quantity) || 0,
+    unit: row.unit || '',
+    minLevel: Number(row.min_level) || 0,
+  });
+
+  const mapEstimatePayload = (row: any): Estimate => ({
+    id: row.id,
+    number: row.number || '',
+    customerId: row.customer_id || '',
+    date: row.date || '',
+    status: row.status || 'Draft',
+    jobName: row.job_name || '',
+    jobAddress: row.job_address || undefined,
+    location: row.location || undefined,
+    images: row.images || undefined,
+    calcData: row.calc_data || { length: 0, width: 0, wallHeight: 0, roofPitch: 0, isGable: false, wallFoamType: 'Open Cell', wallThickness: 0, roofFoamType: 'Open Cell', roofThickness: 0, wastePct: 0 },
+    pricingMode: row.pricing_mode || undefined,
+    pricePerSqFtWall: row.price_per_sqft_wall != null ? Number(row.price_per_sqft_wall) : undefined,
+    pricePerSqFtRoof: row.price_per_sqft_roof != null ? Number(row.price_per_sqft_roof) : undefined,
+    totalBoardFeetOpen: Number(row.total_board_feet_open) || 0,
+    totalBoardFeetClosed: Number(row.total_board_feet_closed) || 0,
+    setsRequiredOpen: Number(row.sets_required_open) || 0,
+    setsRequiredClosed: Number(row.sets_required_closed) || 0,
+    inventoryDeducted: row.inventory_deducted || false,
+    items: row.items || [],
+    subtotal: Number(row.subtotal) || 0,
+    tax: Number(row.tax) || 0,
+    total: Number(row.total) || 0,
+    notes: row.notes || undefined,
+  });
 
   // PWA Install Event Listener
   useEffect(() => {
@@ -268,7 +370,8 @@ const AppContent: React.FC = () => {
     refreshData();
   };
 
-  // --- Status Change Handler (shared by JobsList and JobDetail) ---
+  // --- Status Change Handler (shared by JobsList, JobDetail, and CRM) ---
+  // Uses optimistic UI: updates state immediately, then syncs to Supabase in background
   const handleStatusChange = async (est: Estimate, newStatus: JobStatus) => {
     let updatedEst = { ...est, status: newStatus };
     let updatedInventory = [...inventory];
@@ -281,7 +384,15 @@ const AppContent: React.FC = () => {
         updatedEst.inventoryDeducted = true;
         inventoryChanged = true;
         showToast(`Job Sold! Deducted: ${details.join(', ')}`, 'success');
+      } else {
+        showToast('Work Order Created', 'success');
       }
+    } else if (newStatus === JobStatus.INVOICED) {
+      showToast('Invoice Created', 'success');
+    } else if (newStatus === JobStatus.PAID) {
+      showToast('Payment Recorded!', 'success');
+    } else if (newStatus === JobStatus.ARCHIVED) {
+      showToast('Job Archived', 'info');
     } else if (newStatus === JobStatus.DRAFT && est.inventoryDeducted) {
       const { updatedInventory: restockedInventory } = applyEstimateInventoryChange(est, updatedInventory, 'restock');
       updatedInventory = restockedInventory;
@@ -290,11 +401,30 @@ const AppContent: React.FC = () => {
       showToast("Job Reverted to Draft. Materials Restocked.", 'info');
     }
 
-    await saveEstimate(updatedEst);
+    // Optimistic UI update: apply changes to local state immediately
+    setEstimates(prev => prev.map(e => e.id === est.id ? updatedEst : e));
     if (inventoryChanged) {
-      await saveFullInventory(updatedInventory);
+      setInventory(updatedInventory);
     }
-    refreshData();
+
+    // Background sync to Supabase (fire-and-forget, no blocking)
+    // Use Promise.all so estimate + inventory save in parallel
+    const bgTasks: Promise<any>[] = [
+      saveEstimate(updatedEst).catch(err => {
+        console.error('Failed to save estimate status:', err);
+        showToast('Sync error - please refresh', 'error');
+      }),
+    ];
+    if (inventoryChanged) {
+      bgTasks.push(
+        saveFullInventory(updatedInventory).catch(err => {
+          console.error('Failed to save inventory:', err);
+          showToast('Inventory sync error - please refresh', 'error');
+        })
+      );
+    }
+    // Fire all background tasks together — no await
+    Promise.all(bgTasks);
   };
 
   // --- Job Detail View ---
@@ -668,14 +798,24 @@ const AppContent: React.FC = () => {
         return <Dashboard estimates={estimates} inventory={inventory} onNavigate={navigateTo} />;
       case 'calculator': {
         const editEst = editEstimateId ? estimates.find(e => e.id === editEstimateId) || null : null;
-        return <Calculator settings={settings} customers={customers} inventory={inventory} preSelectedCustomerId={preSelectedCustomerId || undefined} editEstimate={editEst} onSave={(savedId?: string) => { refreshData(); if (savedId) { navigateTo('jobDetail', { jobId: savedId }); } else { navigateTo('jobs'); } }} onRefresh={refreshData} />;
+        return <Calculator settings={settings} customers={customers} inventory={inventory} preSelectedCustomerId={preSelectedCustomerId || undefined} editEstimate={editEst} onSave={(savedId?: string, customerId?: string) => {
+          const custId = customerId || preSelectedCustomerId || editEst?.customerId;
+          refreshData();
+          if (custId) {
+            navigateTo('customers', { customerId: custId });
+          } else if (savedId) {
+            navigateTo('jobDetail', { jobId: savedId });
+          } else {
+            navigateTo('jobs');
+          }
+        }} onRefresh={refreshData} />;
       }
       case 'jobs':
         return <JobsList />;
       case 'jobDetail':
         return selectedJobId ? <JobDetail jobId={selectedJobId} /> : <JobsList />;
       case 'customers':
-        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} openAddOnLoad={openCustomerAdd} />;
+        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} />;
       case 'inventory':
         return <Inventory items={inventory} onRefresh={refreshData} onOptimisticUpdate={(updatedItems) => setInventory(updatedItems)} />;
       case 'settings':
@@ -799,12 +939,20 @@ const AppContent: React.FC = () => {
           {/* Mobile Header (Only Branding & Settings) */}
           <header className="lg:hidden bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-30">
             <BrandLogoMobile />
-            <button 
-              onClick={() => navigateTo('settings')}
-              className={`p-2 rounded-full ${activeView === 'settings' ? 'bg-slate-100 text-brand-600' : 'text-slate-600'}`}
-            >
-              <SettingsIcon className="w-6 h-6" />
-            </button>
+            <div className="flex items-center gap-2">
+              {isSyncing && (
+                <div className="flex items-center gap-1.5 text-xs text-slate-400 animate-pulse">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Syncing</span>
+                </div>
+              )}
+              <button 
+                onClick={() => navigateTo('settings')}
+                className={`p-2 rounded-full ${activeView === 'settings' ? 'bg-slate-100 text-brand-600' : 'text-slate-600'}`}
+              >
+                <SettingsIcon className="w-6 h-6" />
+              </button>
+            </div>
           </header>
 
           {/* View Content */}

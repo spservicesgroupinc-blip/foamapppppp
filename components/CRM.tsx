@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Customer, Estimate } from '../types';
-import { Search, Plus, User, MapPin, Phone, Mail, ArrowLeft, Calendar, FileText, Pencil } from 'lucide-react';
+import { Customer, Estimate, JobStatus } from '../types';
+import { Search, Plus, User, MapPin, Phone, Mail, ArrowLeft, Calendar, FileText, Pencil, Check, ChevronRight, ClipboardList, FileCheck, DollarSign, Archive } from 'lucide-react';
 import { saveCustomer } from '../services/storage';
 import { useToast } from './Toast';
 
@@ -11,10 +11,12 @@ interface CRMProps {
   onNavigate?: (view: string, context?: { customerId?: string; jobId?: string; editEstimateId?: string }) => void;
   onDeleteCustomer?: (customerId: string) => void;
   onDeleteEstimate?: (estimate: Estimate) => void;
+  onStatusChange?: (est: Estimate, newStatus: JobStatus) => void;
   openAddOnLoad?: boolean;
+  autoSelectCustomerId?: string;
 }
 
-const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh, onNavigate, onDeleteCustomer, onDeleteEstimate, openAddOnLoad }) => {
+const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh, onNavigate, onDeleteCustomer, onDeleteEstimate, onStatusChange, openAddOnLoad, autoSelectCustomerId }) => {
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -27,6 +29,17 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
       setIsAdding(true);
     }
   }, [openAddOnLoad]);
+
+  // Auto-select customer when navigating from estimate save
+  useEffect(() => {
+    if (autoSelectCustomerId) {
+      const customer = customers.find(c => c.id === autoSelectCustomerId);
+      if (customer) {
+        setSelectedCustomer(customer);
+        setIsAdding(false);
+      }
+    }
+  }, [autoSelectCustomerId, customers]);
 
   const filtered = customers.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -54,15 +67,59 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
       createdAt: new Date().toISOString()
     };
     
-    await saveCustomer(customer);
+    const saved = await saveCustomer(customer);
     showToast("Customer Added", "success");
     setIsAdding(false);
     setNewCustomer({});
+    // Optimistically set the new customer as selected so the page opens to their profile
+    setSelectedCustomer({ ...customer, id: saved.id });
     onRefresh();
+  };
+
+  // Determine the "most advanced" estimate stage for this customer
+  const getCustomerWorkflowStage = () => {
+    if (customerEstimates.length === 0) return null;
+    const statusOrder = [JobStatus.DRAFT, JobStatus.WORK_ORDER, JobStatus.INVOICED, JobStatus.PAID, JobStatus.ARCHIVED];
+    // Find the latest active (non-archived) estimate by most recent status
+    const activeEstimates = customerEstimates.filter(e => e.status !== JobStatus.ARCHIVED);
+    if (activeEstimates.length === 0) return null;
+    // Sort by status precedence (latest first) then by date
+    activeEstimates.sort((a, b) => {
+      const aIdx = statusOrder.indexOf(a.status);
+      const bIdx = statusOrder.indexOf(b.status);
+      if (aIdx !== bIdx) return aIdx - bIdx; // earliest stage first (needs action)
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+    return activeEstimates[0]; // The estimate that needs the most immediate action
+  };
+
+  const getNextAction = (est: Estimate) => {
+    switch (est.status) {
+      case JobStatus.DRAFT:
+        return { label: 'Mark Job Sold', sublabel: 'Generate Work Order', nextStatus: JobStatus.WORK_ORDER, color: 'bg-orange-500 hover:bg-orange-600', icon: ClipboardList };
+      case JobStatus.WORK_ORDER:
+        return { label: 'Create Invoice', sublabel: 'Bill the customer', nextStatus: JobStatus.INVOICED, color: 'bg-blue-600 hover:bg-blue-700', icon: FileCheck };
+      case JobStatus.INVOICED:
+        return { label: 'Mark as Paid', sublabel: 'Payment received', nextStatus: JobStatus.PAID, color: 'bg-green-600 hover:bg-green-700', icon: DollarSign };
+      case JobStatus.PAID:
+        return { label: 'Archive Job', sublabel: 'Move to archive', nextStatus: JobStatus.ARCHIVED, color: 'bg-slate-500 hover:bg-slate-600', icon: Archive };
+      default:
+        return null;
+    }
+  };
+
+  const workflowSteps = [JobStatus.DRAFT, JobStatus.WORK_ORDER, JobStatus.INVOICED, JobStatus.PAID];
+  const workflowLabels: Record<string, string> = {
+    [JobStatus.DRAFT]: 'Estimate',
+    [JobStatus.WORK_ORDER]: 'Work Order',
+    [JobStatus.INVOICED]: 'Invoiced',
+    [JobStatus.PAID]: 'Paid',
   };
 
   if (selectedCustomer) {
     const lifetimeValue = customerEstimates.reduce((acc, curr) => acc + curr.total, 0);
+    const actionableEstimate = getCustomerWorkflowStage();
+    const nextAction = actionableEstimate ? getNextAction(actionableEstimate) : null;
 
     return (
       <div className="space-y-6 animate-in slide-in-from-right duration-300">
@@ -72,6 +129,78 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
         >
           <ArrowLeft className="w-4 h-4" /> Back to List
         </button>
+
+        {/* Workflow Stage Tracker */}
+        {actionableEstimate && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-slate-700 text-sm uppercase tracking-wider">Workflow Progress</h3>
+                <span className="text-xs text-slate-500 font-mono">{actionableEstimate.number} &mdash; {actionableEstimate.jobName}</span>
+              </div>
+              {/* Progress Steps */}
+              <div className="flex items-center gap-1">
+                {workflowSteps.map((step, i) => {
+                  const currentIdx = workflowSteps.indexOf(actionableEstimate.status);
+                  const isComplete = i < currentIdx;
+                  const isCurrent = i === currentIdx;
+                  return (
+                    <React.Fragment key={step}>
+                      <div className={`flex items-center gap-1.5 px-4 py-2 rounded-full font-semibold text-sm transition-all ${
+                        isCurrent ? 'bg-brand-100 text-brand-700 ring-2 ring-brand-400 shadow-sm' :
+                        isComplete ? 'bg-green-100 text-green-700' :
+                        'bg-slate-100 text-slate-400'
+                      }`}>
+                        {isComplete && <Check className="w-4 h-4" />}
+                        {workflowLabels[step]}
+                      </div>
+                      {i < workflowSteps.length - 1 && (
+                        <div className={`flex-1 h-1 rounded-full ${
+                          isComplete ? 'bg-green-300' :
+                          isCurrent ? 'bg-brand-200' :
+                          'bg-slate-200'
+                        }`} />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Large Next Action Button */}
+            {nextAction && onStatusChange && (
+              <div className="p-6">
+                <button
+                  onClick={() => {
+                    onStatusChange(actionableEstimate, nextAction.nextStatus);
+                  }}
+                  className={`w-full py-5 px-8 rounded-xl text-white font-bold text-lg shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-3 ${nextAction.color}`}
+                >
+                  <nextAction.icon className="w-6 h-6" />
+                  <div className="text-left">
+                    <div>{nextAction.label}</div>
+                    <div className="text-sm font-normal opacity-80">{nextAction.sublabel}</div>
+                  </div>
+                  <ChevronRight className="w-6 h-6 ml-auto" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* No estimates yet - prompt to create one */}
+        {customerEstimates.length === 0 && onNavigate && (
+          <div className="bg-gradient-to-r from-brand-50 to-blue-50 rounded-xl border border-brand-200 p-8 text-center">
+            <ClipboardList className="w-12 h-12 text-brand-400 mx-auto mb-3" />
+            <h3 className="text-lg font-bold text-slate-800 mb-1">Ready to get started?</h3>
+            <p className="text-slate-500 text-sm mb-4">Create an estimate for this customer to begin the workflow.</p>
+            <button
+              onClick={() => onNavigate('calculator', { customerId: selectedCustomer.id })}
+              className="bg-brand-600 hover:bg-brand-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg transition-all active:scale-[0.98] inline-flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" /> Create Estimate
+            </button>
+          </div>
+        )}
 
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-8 border-b border-slate-100 bg-slate-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
