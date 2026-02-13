@@ -416,10 +416,120 @@ export const clearData = async (): Promise<void> => {
   await supabase.from('inventory').delete().eq('user_id', userId);
 };
 
-// --- Mock PDF Generator ---
-export const generatePDF = (estimate: Estimate, customer?: Customer, settings?: AppSettings) => {
-  console.log("Generating PDF for", estimate.id);
-  alert(`PDF Generation Simulation:\n\nEstimate #${estimate.number}\nCustomer: ${customer?.name || 'Unknown'}\nTotal: $${estimate.total.toFixed(2)}\n\n(In a real app, this downloads a PDF file)`);
+// =============================================
+// --- Saved PDFs (Supabase Storage + DB) ---
+// =============================================
+const PDFS_BUCKET = 'saved-pdfs';
+
+export interface SavedPDF {
+  id: string;
+  estimateId: string;
+  documentType: string;
+  documentNumber: string;
+  customerName: string;
+  filePath: string;
+  fileUrl: string;
+  fileSize: number;
+  createdAt: string;
+}
+
+const mapSavedPdfFromDb = (row: any): SavedPDF => ({
+  id: row.id,
+  estimateId: row.estimate_id,
+  documentType: row.document_type,
+  documentNumber: row.document_number,
+  customerName: row.customer_name || '',
+  filePath: row.file_path,
+  fileUrl: row.file_url,
+  fileSize: row.file_size || 0,
+  createdAt: row.created_at,
+});
+
+export const savePDFToSupabase = async (
+  blob: Blob,
+  estimateId: string,
+  documentType: string,
+  documentNumber: string,
+  customerName: string,
+  filename: string
+): Promise<SavedPDF | null> => {
+  try {
+    const userId = await getUserId();
+    const timestamp = Date.now();
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${userId}/${estimateId}/${timestamp}_${safeName}`;
+
+    // Upload PDF blob to storage
+    const { error: uploadError } = await supabase.storage
+      .from(PDFS_BUCKET)
+      .upload(path, blob, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: 'application/pdf',
+      });
+    if (uploadError) {
+      console.error('PDF upload error:', uploadError);
+      return null;
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage.from(PDFS_BUCKET).getPublicUrl(path);
+    const fileUrl = urlData?.publicUrl || '';
+
+    // Save metadata to saved_pdfs table
+    const { data, error: dbError } = await supabase
+      .from('saved_pdfs')
+      .insert({
+        user_id: userId,
+        estimate_id: estimateId,
+        document_type: documentType,
+        document_number: documentNumber,
+        customer_name: customerName,
+        file_path: path,
+        file_url: fileUrl,
+        file_size: blob.size,
+      })
+      .select()
+      .single();
+
+    if (dbError) {
+      console.error('Save PDF metadata error:', dbError);
+      // Clean up uploaded file if DB insert failed
+      await supabase.storage.from(PDFS_BUCKET).remove([path]);
+      return null;
+    }
+
+    return mapSavedPdfFromDb(data);
+  } catch (err) {
+    console.error('savePDFToSupabase error:', err);
+    return null;
+  }
+};
+
+export const getSavedPDFs = async (estimateId?: string): Promise<SavedPDF[]> => {
+  let query = supabase
+    .from('saved_pdfs')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (estimateId) {
+    query = query.eq('estimate_id', estimateId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('getSavedPDFs error:', error);
+    return [];
+  }
+  return (data || []).map(mapSavedPdfFromDb);
+};
+
+export const deleteSavedPDF = async (pdf: SavedPDF): Promise<void> => {
+  // Remove from storage
+  await supabase.storage.from(PDFS_BUCKET).remove([pdf.filePath]);
+  // Remove metadata
+  const { error } = await supabase.from('saved_pdfs').delete().eq('id', pdf.id);
+  if (error) console.error('deleteSavedPDF error:', error);
 };
 
 // =============================================

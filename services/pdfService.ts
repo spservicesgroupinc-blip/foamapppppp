@@ -426,6 +426,18 @@ export const downloadPDF = (data: PDFDocumentData): void => {
 };
 
 // ============================================================
+// Generate PDF as Blob (for uploading to Supabase Storage)
+// ============================================================
+export const generatePDFBlob = (data: PDFDocumentData): Blob => {
+  const doc = generatePDFFromData(data);
+  return doc.output('blob');
+};
+
+export const getPDFFilename = (data: PDFDocumentData): string => {
+  return `${data.documentTitle.replace(/\s+/g, '_')}_${data.documentNumber}.pdf`;
+};
+
+// ============================================================
 // Load logo from URL into a data URL (for embedding in PDF)
 // ============================================================
 export const loadLogoAsDataUrl = (url: string): Promise<string | null> => {

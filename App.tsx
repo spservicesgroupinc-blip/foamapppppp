@@ -1131,6 +1131,10 @@ const AppContent: React.FC = () => {
               customer={pdfCustomer}
               settings={settings}
               onClose={() => setPdfEstimateId(null)}
+              onSaved={() => {
+                // PDF saved to Supabase — optionally refresh data
+                console.log('PDF saved to Supabase for estimate:', pdfEst.id);
+              }}
             />
           );
         })()}

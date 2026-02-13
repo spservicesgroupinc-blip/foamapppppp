@@ -1,19 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, FileDown, Plus, Trash2, Eye, Pencil, FileText } from 'lucide-react';
+import { X, FileDown, Plus, Trash2, Eye, Pencil, FileText, Save, Cloud, CheckCircle } from 'lucide-react';
 import { Estimate, Customer, AppSettings } from '../types';
 import {
   PDFDocumentData,
   PDFLineItem,
   buildPDFDocumentData,
   downloadPDF,
+  generatePDFBlob,
+  getPDFFilename,
   loadLogoAsDataUrl,
 } from '../services/pdfService';
+import { savePDFToSupabase } from '../services/storage';
 
 interface PDFPreviewModalProps {
   estimate: Estimate;
   customer: Customer | undefined;
   settings: AppSettings;
   onClose: () => void;
+  onSaved?: () => void; // callback after successful save to Supabase
 }
 
 const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
@@ -21,10 +25,13 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
   customer,
   settings,
   onClose,
+  onSaved,
 }) => {
   const [docData, setDocData] = useState<PDFDocumentData | null>(null);
   const [activeTab, setActiveTab] = useState<'header' | 'customer' | 'items' | 'footer'>('items');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Build the initial document data and load logo
   useEffect(() => {
@@ -104,21 +111,57 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
     });
   }, []);
 
-  const handleDownload = async () => {
-    if (!docData) return;
-    setIsGenerating(true);
-    // Recalculate totals one final time
+  const getFinalDocData = useCallback((): PDFDocumentData | null => {
+    if (!docData) return null;
     const subtotal = docData.lineItems.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
     const taxMatch = docData.taxLabel.match(/([\d.]+)%/);
     const taxRate = taxMatch ? parseFloat(taxMatch[1]) : 0;
     const tax = subtotal * (taxRate / 100);
     const total = subtotal + tax;
-    const finalData: PDFDocumentData = {
+    return {
       ...docData,
       subtotal: subtotal.toFixed(2),
       taxAmount: tax.toFixed(2),
       total: total.toFixed(2),
     };
+  }, [docData]);
+
+  const handleSaveToSupabase = async () => {
+    const finalData = getFinalDocData();
+    if (!finalData) return;
+    setIsSaving(true);
+    setSaveSuccess(false);
+    try {
+      const blob = generatePDFBlob(finalData);
+      const filename = getPDFFilename(finalData);
+      const result = await savePDFToSupabase(
+        blob,
+        estimate.id,
+        finalData.documentTitle,
+        finalData.documentNumber,
+        finalData.customerName,
+        filename
+      );
+      if (result) {
+        setSaveSuccess(true);
+        onSaved?.();
+        // Auto-clear success after 3 seconds
+        setTimeout(() => setSaveSuccess(false), 3000);
+      } else {
+        alert('Failed to save PDF. Please check your connection and try again.');
+      }
+    } catch (err) {
+      console.error('Save PDF error:', err);
+      alert('Failed to save PDF. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    const finalData = getFinalDocData();
+    if (!finalData) return;
+    setIsGenerating(true);
     try {
       downloadPDF(finalData);
     } catch (err) {
@@ -435,25 +478,44 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
           )}
         </div>
 
-        {/* Modal Footer - Generate Button */}
+        {/* Modal Footer - Save & Export Buttons */}
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <p className="text-xs text-slate-400 text-center sm:text-left">
-            All fields are editable. Changes only affect this PDF — your saved data is unchanged.
+            {saveSuccess 
+              ? '✓ PDF saved to cloud successfully!'
+              : 'Save stores to Supabase. Export downloads the file locally.'}
           </p>
-          <div className="flex gap-3">
+          <div className="flex gap-2 sm:gap-3 flex-wrap justify-center">
             <button
               onClick={onClose}
-              className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              className="px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
             >
               Cancel
             </button>
             <button
+              onClick={handleSaveToSupabase}
+              disabled={isSaving || isGenerating}
+              className={`flex items-center gap-2 px-5 py-2.5 text-sm font-bold rounded-lg shadow-lg transition-all disabled:opacity-50 ${
+                saveSuccess
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+            >
+              {saveSuccess ? (
+                <><CheckCircle className="w-4 h-4" /> Saved!</>
+              ) : isSaving ? (
+                <><Cloud className="w-4 h-4 animate-pulse" /> Saving...</>
+              ) : (
+                <><Save className="w-4 h-4" /> Save PDF</>
+              )}
+            </button>
+            <button
               onClick={handleDownload}
-              disabled={isGenerating}
-              className="flex items-center gap-2 px-6 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-bold rounded-lg shadow-lg transition-all disabled:opacity-50"
+              disabled={isGenerating || isSaving}
+              className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-bold rounded-lg shadow-lg transition-all disabled:opacity-50"
             >
               <FileDown className="w-4 h-4" />
-              {isGenerating ? 'Generating...' : `Download ${docData.documentTitle}`}
+              {isGenerating ? 'Generating...' : `Export ${docData.documentTitle}`}
             </button>
           </div>
         </div>
