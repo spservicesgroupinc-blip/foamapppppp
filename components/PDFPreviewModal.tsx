@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, FileDown, Plus, Trash2, Eye, Pencil, FileText, Save, Cloud, CheckCircle } from 'lucide-react';
-import { Estimate, Customer, AppSettings } from '../types';
+import { X, FileDown, Plus, Trash2, Eye, Pencil, FileText, Save, Cloud, CheckCircle, ClipboardList, Receipt, FileCheck } from 'lucide-react';
+import { Estimate, Customer, AppSettings, DocumentType, formatDocumentNumber } from '../types';
 import {
   PDFDocumentData,
   PDFLineItem,
@@ -9,6 +9,8 @@ import {
   generatePDFBlob,
   getPDFFilename,
   loadLogoAsDataUrl,
+  TERMS_MAP,
+  DOC_TYPE_COLORS,
 } from '../services/pdfService';
 import { savePDFToSupabase } from '../services/storage';
 
@@ -16,14 +18,16 @@ interface PDFPreviewModalProps {
   estimate: Estimate;
   customer: Customer | undefined;
   settings: AppSettings;
+  initialDocumentType?: DocumentType; // Override auto-detected type
   onClose: () => void;
-  onSaved?: () => void; // callback after successful save to Supabase
+  onSaved?: () => void;
 }
 
 const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
   estimate,
   customer,
   settings,
+  initialDocumentType,
   onClose,
   onSaved,
 }) => {
@@ -36,7 +40,7 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
   // Build the initial document data and load logo
   useEffect(() => {
     const init = async () => {
-      const data = buildPDFDocumentData(estimate, customer, settings);
+      const data = buildPDFDocumentData(estimate, customer, settings, initialDocumentType);
       // Load logo if available
       if (settings.logoUrl) {
         const logoData = await loadLogoAsDataUrl(settings.logoUrl);
@@ -45,7 +49,21 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
       setDocData(data);
     };
     init();
-  }, [estimate, customer, settings]);
+  }, [estimate, customer, settings, initialDocumentType]);
+
+  /** Switch the document type — updates title, number prefix, terms, and type-specific defaults */
+  const switchDocumentType = useCallback((newType: DocumentType) => {
+    setDocData(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        documentType: newType,
+        documentTitle: newType,
+        documentNumber: formatDocumentNumber(prev.documentNumber, newType),
+        termsAndConditions: TERMS_MAP[newType],
+      };
+    });
+  }, []);
 
   const updateField = useCallback(
     (field: keyof PDFDocumentData, value: string) => {
@@ -186,23 +204,56 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
   const labelClass = 'block text-xs font-medium text-slate-500 mb-1';
   const sectionClass = 'space-y-3';
 
+  // Colors per document type for the UI badges
+  const typeUIConfig: Record<DocumentType, { bg: string; ring: string; text: string; icon: React.ReactNode; label: string }> = {
+    [DocumentType.ESTIMATE]: { bg: 'bg-blue-50', ring: 'ring-blue-400', text: 'text-blue-700', icon: <FileText className="w-4 h-4" />, label: 'Estimate' },
+    [DocumentType.WORK_ORDER]: { bg: 'bg-amber-50', ring: 'ring-amber-400', text: 'text-amber-700', icon: <ClipboardList className="w-4 h-4" />, label: 'Work Order' },
+    [DocumentType.INVOICE]: { bg: 'bg-green-50', ring: 'ring-green-400', text: 'text-green-700', icon: <Receipt className="w-4 h-4" />, label: 'Invoice' },
+  };
+  const currentTypeUI = docData ? typeUIConfig[docData.documentType] : typeUIConfig[DocumentType.ESTIMATE];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-2 sm:p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[95vh] flex flex-col overflow-hidden">
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="bg-brand-100 p-2 rounded-lg">
-              <FileText className="w-5 h-5 text-brand-600" />
+            <div className={`p-2 rounded-lg ${currentTypeUI.bg}`}>
+              {currentTypeUI.icon}
             </div>
             <div>
               <h2 className="text-lg font-bold text-slate-900">PDF Builder</h2>
-              <p className="text-xs text-slate-500">Edit all sections before generating your {docData.documentTitle.toLowerCase()}</p>
+              <p className="text-xs text-slate-500">Creating <span className={`font-semibold ${currentTypeUI.text}`}>{currentTypeUI.label}</span> for {docData.customerName}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-lg transition-colors">
             <X className="w-5 h-5 text-slate-500" />
           </button>
+        </div>
+
+        {/* Document Type Selector — prominent badges */}
+        <div className="px-6 py-3 border-b border-slate-200 bg-white shrink-0">
+          <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Document Type</p>
+          <div className="flex gap-2">
+            {([DocumentType.ESTIMATE, DocumentType.WORK_ORDER, DocumentType.INVOICE] as const).map(dt => {
+              const cfg = typeUIConfig[dt];
+              const isActive = docData.documentType === dt;
+              return (
+                <button
+                  key={dt}
+                  onClick={() => switchDocumentType(dt)}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border-2 ${
+                    isActive
+                      ? `${cfg.bg} ${cfg.text} border-current ring-2 ${cfg.ring} shadow-sm`
+                      : 'bg-slate-50 text-slate-400 border-transparent hover:bg-slate-100 hover:text-slate-600'
+                  }`}
+                >
+                  {cfg.icon}
+                  {cfg.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Tab Navigation */}
@@ -235,18 +286,6 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>Document Type</label>
-                  <select
-                    className={inputClass}
-                    value={docData.documentTitle}
-                    onChange={(e) => updateField('documentTitle', e.target.value)}
-                  >
-                    <option value="ESTIMATE">ESTIMATE</option>
-                    <option value="WORK ORDER">WORK ORDER</option>
-                    <option value="INVOICE">INVOICE</option>
-                  </select>
-                </div>
-                <div>
                   <label className={labelClass}>Document Number</label>
                   <input className={inputClass} value={docData.documentNumber} onChange={(e) => updateField('documentNumber', e.target.value)} />
                 </div>
@@ -255,6 +294,44 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
                   <input className={inputClass} value={docData.documentDate} onChange={(e) => updateField('documentDate', e.target.value)} />
                 </div>
               </div>
+
+              {/* Type-specific header fields */}
+              {docData.documentType === DocumentType.ESTIMATE && (
+                <div>
+                  <label className={labelClass}>Valid Until</label>
+                  <input className={inputClass} value={docData.validUntil} onChange={(e) => updateField('validUntil', e.target.value)} placeholder="e.g. March 15, 2026" />
+                </div>
+              )}
+              {docData.documentType === DocumentType.WORK_ORDER && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Scheduled Date</label>
+                    <input className={inputClass} value={docData.scheduledDate} onChange={(e) => updateField('scheduledDate', e.target.value)} placeholder="e.g. February 20, 2026" />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={labelClass}>Work Scope</label>
+                    <textarea className={`${inputClass} min-h-[60px] resize-y`} value={docData.workScope} onChange={(e) => updateField('workScope', e.target.value)} placeholder="Describe the scope of work..." />
+                  </div>
+                </div>
+              )}
+              {docData.documentType === DocumentType.INVOICE && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>PO Number</label>
+                    <input className={inputClass} value={docData.poNumber} onChange={(e) => updateField('poNumber', e.target.value)} placeholder="Customer PO# (optional)" />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Payment Terms</label>
+                    <select className={inputClass} value={docData.paymentTerms} onChange={(e) => updateField('paymentTerms', e.target.value)}>
+                      <option value="Net 30">Net 30</option>
+                      <option value="Net 15">Net 15</option>
+                      <option value="Net 60">Net 60</option>
+                      <option value="Due on Receipt">Due on Receipt</option>
+                      <option value="50/50">50% Deposit / 50% on Completion</option>
+                    </select>
+                  </div>
+                </div>
+              )}
 
               <h4 className="font-medium text-slate-700 mt-4 pt-3 border-t border-slate-100">Company Details</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -512,10 +589,14 @@ const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
             <button
               onClick={handleDownload}
               disabled={isGenerating || isSaving}
-              className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-bold rounded-lg shadow-lg transition-all disabled:opacity-50"
+              className={`flex items-center gap-2 px-5 py-2.5 text-white text-sm font-bold rounded-lg shadow-lg transition-all disabled:opacity-50 ${
+                docData.documentType === DocumentType.ESTIMATE ? 'bg-blue-600 hover:bg-blue-700' :
+                docData.documentType === DocumentType.WORK_ORDER ? 'bg-amber-600 hover:bg-amber-700' :
+                'bg-green-600 hover:bg-green-700'
+              }`}
             >
               <FileDown className="w-4 h-4" />
-              {isGenerating ? 'Generating...' : `Export ${docData.documentTitle}`}
+              {isGenerating ? 'Generating...' : `Export ${currentTypeUI.label}`}
             </button>
           </div>
         </div>

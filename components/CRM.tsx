@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Customer, Estimate, JobStatus } from '../types';
-import { Search, Plus, User, MapPin, Phone, Mail, ArrowLeft, Calendar, FileText, Pencil, Check, ChevronRight, ClipboardList, FileCheck, DollarSign, Archive, FileDown } from 'lucide-react';
+import { Customer, Estimate, JobStatus, DocumentType, statusToDocumentType } from '../types';
+import { Search, Plus, User, MapPin, Phone, Mail, ArrowLeft, Calendar, FileText, Pencil, Check, ChevronRight, ClipboardList, FileCheck, DollarSign, Archive, FileDown, Receipt } from 'lucide-react';
 import { saveCustomer } from '../services/storage';
 import { useToast } from './Toast';
 
@@ -268,8 +268,16 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
                   {customerEstimates.map(est => (
                     <div key={est.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-100 hover:border-brand-200 transition-colors">
                       <div className="flex items-center gap-4">
-                        <div className="bg-white p-2 rounded border border-slate-200">
-                          <FileText className="w-5 h-5 text-brand-600" />
+                        <div className={`p-2 rounded border ${
+                          est.status === JobStatus.DRAFT ? 'bg-blue-50 border-blue-200' :
+                          est.status === JobStatus.WORK_ORDER ? 'bg-amber-50 border-amber-200' :
+                          est.status === JobStatus.INVOICED ? 'bg-green-50 border-green-200' :
+                          est.status === JobStatus.PAID ? 'bg-emerald-50 border-emerald-200' :
+                          'bg-slate-50 border-slate-200'
+                        }`}>
+                          {est.status === JobStatus.WORK_ORDER ? <ClipboardList className="w-5 h-5 text-amber-600" /> :
+                           est.status === JobStatus.INVOICED || est.status === JobStatus.PAID ? <Receipt className="w-5 h-5 text-green-600" /> :
+                           <FileText className="w-5 h-5 text-blue-600" />}
                         </div>
                         <div>
                           <p className="font-medium text-slate-900">{est.jobName}</p>
@@ -278,7 +286,13 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
                       </div>
                       <div className="text-right space-y-2">
                          <p className="font-bold text-slate-900">${est.total.toLocaleString()}</p>
-                         <span className="text-xs px-2 py-0.5 bg-slate-200 rounded-full text-slate-600">{est.status}</span>
+                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            est.status === JobStatus.DRAFT ? 'bg-blue-100 text-blue-700' :
+                            est.status === JobStatus.WORK_ORDER ? 'bg-amber-100 text-amber-700' :
+                            est.status === JobStatus.INVOICED ? 'bg-green-100 text-green-700' :
+                            est.status === JobStatus.PAID ? 'bg-emerald-100 text-emerald-700' :
+                            'bg-slate-200 text-slate-600'
+                         }`}>{est.status}</span>
                          <div className="flex items-center justify-end gap-2 mt-1">
                            {onNavigate && (
                             <button
@@ -296,14 +310,20 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
                               View
                             </button>
                            )}
-                           {onGeneratePDF && (
-                            <button
-                              onClick={() => onGeneratePDF(est.id)}
-                              className="text-xs text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
-                            >
-                              <FileDown className="w-3 h-3" /> PDF
-                            </button>
-                           )}
+                           {onGeneratePDF && (() => {
+                            const docType = statusToDocumentType(est.status);
+                            const pdfLabel = docType === DocumentType.INVOICE ? 'Invoice' : docType === DocumentType.WORK_ORDER ? 'Work Order' : 'Estimate';
+                            const pdfColor = docType === DocumentType.INVOICE ? 'text-green-600 hover:text-green-700' : docType === DocumentType.WORK_ORDER ? 'text-amber-600 hover:text-amber-700' : 'text-blue-600 hover:text-blue-700';
+                            const PdfIcon = docType === DocumentType.INVOICE ? Receipt : docType === DocumentType.WORK_ORDER ? ClipboardList : FileDown;
+                            return (
+                              <button
+                                onClick={() => onGeneratePDF(est.id)}
+                                className={`text-xs ${pdfColor} font-medium flex items-center gap-1`}
+                              >
+                                <PdfIcon className="w-3 h-3" /> {pdfLabel} PDF
+                              </button>
+                            );
+                           })()}
                            {onDeleteEstimate && (
                             <button
                               onClick={() => onDeleteEstimate(est)}

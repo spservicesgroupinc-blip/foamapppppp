@@ -30,7 +30,7 @@ import { NAV_ITEMS } from './constants';
 import { getCustomers, getEstimates, getInventory, getSettings, saveEstimate, saveFullInventory, deleteEstimate, deleteCustomer } from './services/storage';
 import { DEFAULT_SETTINGS } from './constants';
 import { supabase } from './services/supabaseClient';
-import { JobStatus, Estimate, User, InventoryItem, Customer, AppSettings } from './types';
+import { JobStatus, Estimate, User, InventoryItem, Customer, AppSettings, DocumentType, statusToDocumentType } from './types';
 import type { Session } from '@supabase/supabase-js';
 
 // Wrapper to use the hook
@@ -78,6 +78,7 @@ const AppContent: React.FC = () => {
   const [jobsFilter, setJobsFilter] = useState('All'); // Lifted from JobsList to prevent reset
   const recentOptimisticIds = useRef<Set<string>>(new Set()); // Suppress realtime for recently-updated items
   const [pdfEstimateId, setPdfEstimateId] = useState<string | null>(null); // PDF modal target
+  const [pdfDocumentType, setPdfDocumentType] = useState<DocumentType | undefined>(undefined); // Optional override
 
   // --- Supabase Auth Listener ---
   useEffect(() => {
@@ -471,6 +472,18 @@ const AppContent: React.FC = () => {
       showToast("Job Reverted to Draft. Materials Restocked.", 'info');
     }
 
+    // Auto-open PDF builder for status transitions that produce documents
+    if (
+      newStatus === JobStatus.WORK_ORDER ||
+      newStatus === JobStatus.INVOICED
+    ) {
+      // Open PDF modal with the correct document type after a short delay so state settles
+      setTimeout(() => {
+        setPdfDocumentType(statusToDocumentType(newStatus));
+        setPdfEstimateId(est.id);
+      }, 400);
+    }
+
     // Mark this estimate (and any changed inventory items) as recently-optimistic
     // so realtime subscription won't overwrite the local state
     recentOptimisticIds.current.add(est.id);
@@ -619,7 +632,7 @@ const AppContent: React.FC = () => {
               <Pencil className="w-4 h-4" /> Edit
             </button>
             <button
-              onClick={() => setPdfEstimateId(est.id)}
+              onClick={() => { setPdfDocumentType(statusToDocumentType(est.status)); setPdfEstimateId(est.id); }}
               className="flex items-center justify-center gap-2 py-3 px-6 rounded-lg border border-slate-200 text-slate-700 font-medium hover:bg-slate-50 transition-colors"
             >
               <FileDown className="w-4 h-4" /> Download PDF
@@ -785,6 +798,7 @@ const AppContent: React.FC = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        setPdfDocumentType(statusToDocumentType(est.status));
                         setPdfEstimateId(est.id);
                       }}
                       className="text-xs text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
@@ -862,6 +876,7 @@ const AppContent: React.FC = () => {
                          <button
                            onClick={(e) => {
                              e.stopPropagation();
+                             setPdfDocumentType(statusToDocumentType(est.status));
                              setPdfEstimateId(est.id);
                            }}
                            className="text-sm text-green-600 hover:underline font-medium"
@@ -916,7 +931,7 @@ const AppContent: React.FC = () => {
       case 'jobDetail':
         return selectedJobId ? renderJobDetail(selectedJobId) : renderJobsList();
       case 'customers':
-        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} onGeneratePDF={(id) => setPdfEstimateId(id)} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} />;
+        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} onGeneratePDF={(id) => { const est = estimates.find(e => e.id === id); if (est) setPdfDocumentType(statusToDocumentType(est.status)); setPdfEstimateId(id); }} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} />;
       case 'inventory':
         return <Inventory items={inventory} onRefresh={refreshData} onOptimisticUpdate={(updatedItems) => setInventory(updatedItems)} />;
       case 'settings':
@@ -1130,9 +1145,9 @@ const AppContent: React.FC = () => {
               estimate={pdfEst}
               customer={pdfCustomer}
               settings={settings}
-              onClose={() => setPdfEstimateId(null)}
+              initialDocumentType={pdfDocumentType}
+              onClose={() => { setPdfEstimateId(null); setPdfDocumentType(undefined); }}
               onSaved={() => {
-                // PDF saved to Supabase — optionally refresh data
                 console.log('PDF saved to Supabase for estimate:', pdfEst.id);
               }}
             />

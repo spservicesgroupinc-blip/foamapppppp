@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import { AppSettings, Estimate, Customer, JobStatus } from '../types';
+import { AppSettings, Estimate, Customer, JobStatus, DocumentType, statusToDocumentType, formatDocumentNumber } from '../types';
 
 // ============================================================
 // Types for editable PDF sections
@@ -14,7 +14,8 @@ export interface PDFLineItem {
 
 export interface PDFDocumentData {
   // Header
-  documentTitle: string; // e.g. "ESTIMATE", "WORK ORDER", "INVOICE"
+  documentType: DocumentType; // Strongly typed enum
+  documentTitle: string; // Display string e.g. "ESTIMATE", "WORK ORDER", "INVOICE"
   documentNumber: string;
   documentDate: string;
 
@@ -50,17 +51,39 @@ export interface PDFDocumentData {
   notes: string;
   termsAndConditions: string;
   thankYouMessage: string;
+
+  // Type-specific fields
+  validUntil: string; // Estimate: expiry date
+  poNumber: string; // Invoice: purchase order reference
+  paymentTerms: string; // Invoice: net-30, etc.
+  workScope: string; // Work Order: scope description
+  scheduledDate: string; // Work Order: when work is scheduled
 }
 
 // ============================================================
 // Build default document data from estimate + customer + settings
 // ============================================================
+/** Terms & conditions templates per document type */
+export const TERMS_MAP: Record<DocumentType, string> = {
+  [DocumentType.ESTIMATE]: 'This estimate is valid for 30 days from the date above. Prices are subject to change after expiration. A signed acceptance is required to proceed.',
+  [DocumentType.WORK_ORDER]: 'Work will be performed according to the specifications outlined above. Any changes to scope must be approved in writing and may affect pricing.',
+  [DocumentType.INVOICE]: 'Payment is due within 30 days of invoice date. Late payments may be subject to a 1.5% monthly finance charge.',
+};
+
+/** Brand color per document type (for PDF header & badge) */
+export const DOC_TYPE_COLORS: Record<DocumentType, { brand: [number, number, number]; label: string }> = {
+  [DocumentType.ESTIMATE]: { brand: [30, 64, 175], label: 'blue' },      // blue-800
+  [DocumentType.WORK_ORDER]: { brand: [180, 83, 9], label: 'amber' },    // amber-700
+  [DocumentType.INVOICE]: { brand: [22, 163, 74], label: 'green' },      // green-600
+};
+
 export const buildPDFDocumentData = (
   estimate: Estimate,
   customer: Customer | undefined,
-  settings: AppSettings
+  settings: AppSettings,
+  overrideType?: DocumentType
 ): PDFDocumentData => {
-  const docType = getDocumentType(estimate.status);
+  const docType = overrideType ?? statusToDocumentType(estimate.status);
 
   const lineItems: PDFLineItem[] = estimate.items.map(item => ({
     description: item.description,
@@ -70,16 +93,16 @@ export const buildPDFDocumentData = (
     total: item.total.toFixed(2),
   }));
 
-  const termsMap: Record<string, string> = {
-    'ESTIMATE': 'This estimate is valid for 30 days from the date above. Prices are subject to change after expiration. A signed acceptance is required to proceed.',
-    'WORK ORDER': 'Work will be performed according to the specifications outlined above. Any changes to scope must be approved in writing and may affect pricing.',
-    'INVOICE': 'Payment is due within 30 days of invoice date. Late payments may be subject to a 1.5% monthly finance charge.',
-  };
+  // Compute a default "valid until" 30 days from estimate date
+  const estDate = new Date(estimate.date);
+  const validDate = new Date(estDate);
+  validDate.setDate(validDate.getDate() + 30);
 
   return {
-    documentTitle: docType,
-    documentNumber: estimate.number,
-    documentDate: new Date(estimate.date).toLocaleDateString('en-US', {
+    documentType: docType,
+    documentTitle: docType, // display label = enum value
+    documentNumber: formatDocumentNumber(estimate.number, docType),
+    documentDate: estDate.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
@@ -88,7 +111,7 @@ export const buildPDFDocumentData = (
     companyAddress: settings.companyAddress,
     companyPhone: settings.companyPhone,
     companyEmail: settings.companyEmail,
-    logoDataUrl: null, // Will be populated by the modal if logo is available
+    logoDataUrl: null,
     customerName: customer?.name || 'N/A',
     customerCompany: customer?.companyName || '',
     customerAddress: customer?.address || '',
@@ -105,21 +128,15 @@ export const buildPDFDocumentData = (
     taxAmount: estimate.tax.toFixed(2),
     total: estimate.total.toFixed(2),
     notes: estimate.notes || '',
-    termsAndConditions: termsMap[docType] || termsMap['ESTIMATE'],
+    termsAndConditions: TERMS_MAP[docType],
     thankYouMessage: 'Thank you for your business!',
+    // Type-specific defaults
+    validUntil: validDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+    poNumber: '',
+    paymentTerms: 'Net 30',
+    workScope: `Spray foam insulation per specifications — ${estimate.jobName || 'See line items'}`,
+    scheduledDate: '',
   };
-};
-
-const getDocumentType = (status: JobStatus): string => {
-  switch (status) {
-    case JobStatus.INVOICED:
-    case JobStatus.PAID:
-      return 'INVOICE';
-    case JobStatus.WORK_ORDER:
-      return 'WORK ORDER';
-    default:
-      return 'ESTIMATE';
-  }
 };
 
 // ============================================================
@@ -133,8 +150,9 @@ export const generatePDFFromData = (data: PDFDocumentData): jsPDF => {
   const contentWidth = pageWidth - margin * 2;
   let y = margin;
 
-  // Colors
-  const brandColor: [number, number, number] = [185, 28, 28]; // brand-700 red
+  // Colors — pick brand color based on document type
+  const typeColors = DOC_TYPE_COLORS[data.documentType] || DOC_TYPE_COLORS[DocumentType.ESTIMATE];
+  const brandColor: [number, number, number] = typeColors.brand;
   const darkText: [number, number, number] = [30, 41, 59]; // slate-800
   const medText: [number, number, number] = [100, 116, 139]; // slate-500
   const lightBg: [number, number, number] = [248, 250, 252]; // slate-50
@@ -388,6 +406,94 @@ export const generatePDFFromData = (data: PDFDocumentData): jsPDF => {
     const termLines = doc.splitTextToSize(data.termsAndConditions, contentWidth);
     doc.text(termLines, margin, y);
     y += termLines.length * 10 + 16;
+  }
+
+  // ── TYPE-SPECIFIC SECTIONS ───────────────────────────────
+  if (data.documentType === DocumentType.ESTIMATE && data.validUntil) {
+    checkPageBreak(60);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...brandColor);
+    doc.text('ESTIMATE VALIDITY', margin, y);
+    y += 12;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...medText);
+    doc.text(`This estimate is valid until ${data.validUntil}.`, margin, y);
+    y += 20;
+    // Signature / acceptance line
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...brandColor);
+    doc.text('ACCEPTANCE', margin, y);
+    y += 14;
+    doc.setDrawColor(...borderColor);
+    doc.line(margin, y + 2, margin + contentWidth * 0.45, y + 2);
+    doc.line(margin + contentWidth * 0.55, y + 2, pageWidth - margin, y + 2);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...medText);
+    doc.text('Signature', margin, y + 14);
+    doc.text('Date', margin + contentWidth * 0.55, y + 14);
+    y += 30;
+  }
+
+  if (data.documentType === DocumentType.WORK_ORDER) {
+    checkPageBreak(60);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...brandColor);
+    doc.text('WORK SCOPE', margin, y);
+    y += 12;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...medText);
+    const scopeLines = doc.splitTextToSize(data.workScope || 'Per specifications above.', contentWidth);
+    doc.text(scopeLines, margin, y);
+    y += scopeLines.length * 12 + 6;
+    if (data.scheduledDate) {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...darkText);
+      doc.text(`Scheduled: ${data.scheduledDate}`, margin, y);
+      y += 16;
+    }
+    // Work authorization line
+    y += 6;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...brandColor);
+    doc.text('AUTHORIZATION', margin, y);
+    y += 14;
+    doc.setDrawColor(...borderColor);
+    doc.line(margin, y + 2, margin + contentWidth * 0.45, y + 2);
+    doc.line(margin + contentWidth * 0.55, y + 2, pageWidth - margin, y + 2);
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...medText);
+    doc.text('Authorized By', margin, y + 14);
+    doc.text('Date', margin + contentWidth * 0.55, y + 14);
+    y += 30;
+  }
+
+  if (data.documentType === DocumentType.INVOICE) {
+    checkPageBreak(50);
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...brandColor);
+    doc.text('PAYMENT INFORMATION', margin, y);
+    y += 14;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...darkText);
+    if (data.poNumber) {
+      doc.text(`PO Number: ${data.poNumber}`, margin, y);
+      y += 14;
+    }
+    doc.text(`Payment Terms: ${data.paymentTerms || 'Net 30'}`, margin, y);
+    y += 14;
+    doc.setTextColor(...medText);
+    doc.text('Please reference the invoice number on all payments.', margin, y);
+    y += 20;
   }
 
   // ── THANK YOU ────────────────────────────────────────────

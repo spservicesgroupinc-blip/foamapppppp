@@ -6,6 +6,37 @@ export enum JobStatus {
   ARCHIVED = 'Archived'
 }
 
+export enum DocumentType {
+  ESTIMATE = 'ESTIMATE',
+  WORK_ORDER = 'WORK ORDER',
+  INVOICE = 'INVOICE',
+}
+
+/** Map a job status to the default document type for PDF generation */
+export const statusToDocumentType = (status: JobStatus): DocumentType => {
+  switch (status) {
+    case JobStatus.INVOICED:
+    case JobStatus.PAID:
+      return DocumentType.INVOICE;
+    case JobStatus.WORK_ORDER:
+      return DocumentType.WORK_ORDER;
+    default:
+      return DocumentType.ESTIMATE;
+  }
+};
+
+/** Generate a document-type-specific number prefix: EST-0042, WO-0042, INV-0042 */
+export const formatDocumentNumber = (baseNumber: string, docType: DocumentType): string => {
+  // Strip any existing prefix (EST-, WO-, INV-) to get the raw number
+  const raw = baseNumber.replace(/^(EST|WO|INV)-/i, '');
+  const prefixMap: Record<DocumentType, string> = {
+    [DocumentType.ESTIMATE]: 'EST',
+    [DocumentType.WORK_ORDER]: 'WO',
+    [DocumentType.INVOICE]: 'INV',
+  };
+  return `${prefixMap[docType]}-${raw}`;
+};
+
 export enum FoamType {
   OPEN_CELL = 'Open Cell',
   CLOSED_CELL = 'Closed Cell'
