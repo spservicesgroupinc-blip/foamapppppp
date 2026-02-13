@@ -66,7 +66,8 @@ export interface Estimate {
   jobName: string;
   jobAddress?: string;
   location?: JobLocation;
-  images?: string[]; // Base64
+  images?: string[]; // Storage URLs (legacy: base64)
+  thumbnails?: string[]; // Thumbnail URLs for fast loading
 
   // Calculation Snapshot
   calcData: CalculationData;

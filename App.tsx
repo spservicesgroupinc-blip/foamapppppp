@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   LayoutDashboard, 
   Calculator as CalculatorIcon, 
@@ -74,6 +74,8 @@ const AppContent: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState(Date.now()); // Trigger re-renders
   const [isSyncing, setIsSyncing] = useState(false); // Background sync indicator (no blocking)
   const initialLoadDone = useRef(false);
+  const [jobsFilter, setJobsFilter] = useState('All'); // Lifted from JobsList to prevent reset
+  const recentOptimisticIds = useRef<Set<string>>(new Set()); // Suppress realtime for recently-updated items
 
   // --- Supabase Auth Listener ---
   useEffect(() => {
@@ -153,8 +155,8 @@ const AppContent: React.FC = () => {
   }, [lastUpdate, user]);
 
   // --- Supabase Realtime Subscriptions ---
-  // Listen for changes to estimates and inventory tables and merge them into local state
-  // so that inventory updates appear instantly on mobile without a full reload
+  // Listen for changes to ALL tables and merge them into local state in real-time
+  // so that data updates appear instantly on mobile without a full reload
   useEffect(() => {
     if (!user) return;
 
@@ -164,6 +166,9 @@ const AppContent: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'inventory' },
         (payload) => {
+          const id = (payload.new as any)?.id || (payload.old as any)?.id;
+          // Skip if this was just modified optimistically (prevents overwrite/flicker)
+          if (id && recentOptimisticIds.current.has(id)) return;
           if (payload.eventType === 'INSERT') {
             const newItem = mapInventoryPayload(payload.new);
             setInventory(prev => {
@@ -183,6 +188,9 @@ const AppContent: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'estimates' },
         (payload) => {
+          const id = (payload.new as any)?.id || (payload.old as any)?.id;
+          // Skip if this was just modified optimistically (prevents overwrite/flicker)
+          if (id && recentOptimisticIds.current.has(id)) return;
           if (payload.eventType === 'INSERT') {
             const newEst = mapEstimatePayload(payload.new);
             setEstimates(prev => {
@@ -195,6 +203,37 @@ const AppContent: React.FC = () => {
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
             if (oldId) setEstimates(prev => prev.filter(e => e.id !== oldId));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers' },
+        (payload) => {
+          const id = (payload.new as any)?.id || (payload.old as any)?.id;
+          if (id && recentOptimisticIds.current.has(id)) return;
+          if (payload.eventType === 'INSERT') {
+            const newCust = mapCustomerPayload(payload.new);
+            setCustomers(prev => {
+              if (prev.some(c => c.id === newCust.id)) return prev;
+              return [newCust, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const updated = mapCustomerPayload(payload.new);
+            setCustomers(prev => prev.map(c => c.id === updated.id ? updated : c));
+          } else if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as any)?.id;
+            if (oldId) setCustomers(prev => prev.filter(c => c.id !== oldId));
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'settings' },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+            const updated = mapSettingsPayload(payload.new);
+            setSettings(updated);
           }
         }
       )
@@ -225,6 +264,7 @@ const AppContent: React.FC = () => {
     jobAddress: row.job_address || undefined,
     location: row.location || undefined,
     images: row.images || undefined,
+    thumbnails: row.thumbnails || undefined,
     calcData: row.calc_data || { length: 0, width: 0, wallHeight: 0, roofPitch: 0, isGable: false, wallFoamType: 'Open Cell', wallThickness: 0, roofFoamType: 'Open Cell', roofThickness: 0, wastePct: 0 },
     pricingMode: row.pricing_mode || undefined,
     pricePerSqFtWall: row.price_per_sqft_wall != null ? Number(row.price_per_sqft_wall) : undefined,
@@ -239,6 +279,34 @@ const AppContent: React.FC = () => {
     tax: Number(row.tax) || 0,
     total: Number(row.total) || 0,
     notes: row.notes || undefined,
+  });
+
+  const mapCustomerPayload = (row: any): Customer => ({
+    id: row.id,
+    name: row.name,
+    companyName: row.company_name || '',
+    email: row.email || '',
+    phone: row.phone || '',
+    address: row.address || '',
+    city: row.city || '',
+    state: row.state || '',
+    zip: row.zip || '',
+    notes: row.notes || undefined,
+    createdAt: row.created_at || new Date().toISOString(),
+  });
+
+  const mapSettingsPayload = (row: any): AppSettings => ({
+    companyName: row.company_name || DEFAULT_SETTINGS.companyName,
+    companyAddress: row.company_address || '',
+    companyPhone: row.company_phone || '',
+    companyEmail: row.company_email || '',
+    logoUrl: row.logo_url || undefined,
+    openCellYield: Number(row.open_cell_yield) || DEFAULT_SETTINGS.openCellYield,
+    closedCellYield: Number(row.closed_cell_yield) || DEFAULT_SETTINGS.closedCellYield,
+    openCellCost: Number(row.open_cell_cost) || DEFAULT_SETTINGS.openCellCost,
+    closedCellCost: Number(row.closed_cell_cost) || DEFAULT_SETTINGS.closedCellCost,
+    laborRate: Number(row.labor_rate) || DEFAULT_SETTINGS.laborRate,
+    taxRate: Number(row.tax_rate) ?? DEFAULT_SETTINGS.taxRate,
   });
 
   // PWA Install Event Listener
@@ -401,6 +469,13 @@ const AppContent: React.FC = () => {
       showToast("Job Reverted to Draft. Materials Restocked.", 'info');
     }
 
+    // Mark this estimate (and any changed inventory items) as recently-optimistic
+    // so realtime subscription won't overwrite the local state
+    recentOptimisticIds.current.add(est.id);
+    if (inventoryChanged) {
+      updatedInventory.forEach(i => recentOptimisticIds.current.add(i.id));
+    }
+
     // Optimistic UI update: apply changes to local state immediately
     setEstimates(prev => prev.map(e => e.id === est.id ? updatedEst : e));
     if (inventoryChanged) {
@@ -423,12 +498,20 @@ const AppContent: React.FC = () => {
         })
       );
     }
-    // Fire all background tasks together — no await
-    Promise.all(bgTasks);
+    // Fire all background tasks together — clear optimistic suppression after sync
+    Promise.all(bgTasks).finally(() => {
+      // Allow realtime updates again after a short delay
+      setTimeout(() => {
+        recentOptimisticIds.current.delete(est.id);
+        if (inventoryChanged) {
+          updatedInventory.forEach(i => recentOptimisticIds.current.delete(i.id));
+        }
+      }, 2000);
+    });
   };
 
-  // --- Job Detail View ---
-  const JobDetail = ({ jobId }: { jobId: string }) => {
+  // --- Job Detail View (render function, NOT a component — avoids unmount/remount on state change) ---
+  const renderJobDetail = (jobId: string) => {
     const est = estimates.find(e => e.id === jobId);
     if (!est) {
       return (
@@ -626,13 +709,11 @@ const AppContent: React.FC = () => {
     );
   };
 
-  // --- Job List Component ---
-  const JobsList = () => {
-    const [filter, setFilter] = useState('All');
-    
+  // --- Job List (render function, NOT a component — avoids unmount/remount + preserves filter state) ---
+  const renderJobsList = () => {
     const filteredEstimates = estimates.filter(e => {
-        if (filter === 'All') return true;
-        return e.status === filter;
+        if (jobsFilter === 'All') return true;
+        return e.status === jobsFilter;
     });
 
     return (
@@ -641,8 +722,8 @@ const AppContent: React.FC = () => {
              <h2 className="text-2xl font-bold text-slate-900">Jobs & Estimates</h2>
              <select 
                className="w-full sm:w-auto p-2 border rounded-lg bg-white"
-               value={filter}
-               onChange={(e) => setFilter(e.target.value)}
+               value={jobsFilter}
+               onChange={(e) => setJobsFilter(e.target.value)}
              >
                <option value="All">All Jobs</option>
                <option value={JobStatus.DRAFT}>Drafts</option>
@@ -811,9 +892,9 @@ const AppContent: React.FC = () => {
         }} onRefresh={refreshData} />;
       }
       case 'jobs':
-        return <JobsList />;
+        return renderJobsList();
       case 'jobDetail':
-        return selectedJobId ? <JobDetail jobId={selectedJobId} /> : <JobsList />;
+        return selectedJobId ? renderJobDetail(selectedJobId) : renderJobsList();
       case 'customers':
         return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} />;
       case 'inventory':

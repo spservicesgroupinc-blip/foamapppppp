@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings, Customer, Estimate, FoamType, JobStatus, JobItem, JobLocation, InventoryItem } from '../types';
-import { Save, RefreshCw, Plus, Calculator as CalcIcon, MapPin, Camera, Eye, EyeOff, X, UserPlus, Check, DollarSign } from 'lucide-react';
+import { Save, RefreshCw, Plus, Calculator as CalcIcon, MapPin, Camera, Eye, EyeOff, X, UserPlus, Check, DollarSign, Loader2 } from 'lucide-react';
 import { saveEstimate, saveCustomer } from '../services/storage';
+import { uploadJobPhoto, deleteJobPhoto, isBase64Image } from '../services/imageService';
+import { supabase } from '../services/supabaseClient';
 import { useToast } from './Toast';
 
 interface CalculatorProps {
@@ -29,6 +31,8 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
   const [jobAddress, setJobAddress] = useState('');
   const [location, setLocation] = useState<JobLocation | undefined>(undefined);
   const [images, setImages] = useState<string[]>([]);
+  const [thumbnails, setThumbnails] = useState<string[]>([]);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
 
   // Add Customer Modal State
   const [showAddCustomer, setShowAddCustomer] = useState(false);
@@ -66,6 +70,7 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
       setJobAddress(editEstimate.jobAddress || '');
       setLocation(editEstimate.location);
       setImages(editEstimate.images || []);
+      setThumbnails(editEstimate.thumbnails || []);
       
       // Load calc data
       if (editEstimate.calcData) {
@@ -243,20 +248,44 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImages([...images, reader.result as string]);
-        showToast("Photo Added", "success");
-      };
-      reader.readAsDataURL(file);
+      
+      // Validate file size (max 20MB raw — will be compressed)
+      if (file.size > 20 * 1024 * 1024) {
+        showToast("Photo too large (max 20MB)", "error");
+        return;
+      }
+
+      setIsUploadingPhoto(true);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) {
+          showToast("Not authenticated", "error");
+          return;
+        }
+        const result = await uploadJobPhoto(file, session.user.id);
+        setImages(prev => [...prev, result.url]);
+        setThumbnails(prev => [...prev, result.thumbnailUrl]);
+        showToast("Photo Uploaded", "success");
+      } catch (err: any) {
+        console.error('Photo upload error:', err);
+        showToast("Failed to upload photo: " + (err.message || 'Unknown error'), "error");
+      } finally {
+        setIsUploadingPhoto(false);
+      }
     }
   };
 
-  const removeImage = (index: number) => {
+  const removeImage = async (index: number) => {
+    const url = images[index];
+    // Delete from storage if it's a storage URL (not legacy base64)
+    if (url && !isBase64Image(url)) {
+      deleteJobPhoto(url).catch(err => console.error('Failed to delete photo:', err));
+    }
     setImages(images.filter((_, i) => i !== index));
+    setThumbnails(thumbnails.filter((_, i) => i !== index));
   };
 
   // --- New Customer Logic ---
@@ -355,6 +384,7 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
       jobAddress: jobAddress || undefined,
       location: location,
       images: images,
+      thumbnails: thumbnails,
       calcData: {
         length, width, wallHeight: height, roofPitch: pitch, isGable,
         wallFoamType, wallThickness, roofFoamType, roofThickness, wastePct
@@ -530,7 +560,7 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
            </button>
           {!isEditMode && (
           <button onClick={() => {
-            setLength(0); setWidth(0); setMiscItems([]); setImages([]); setLocation(undefined);
+            setLength(0); setWidth(0); setMiscItems([]); setImages([]); setThumbnails([]); setLocation(undefined);
             showToast("Estimator Reset", "info");
           }} className="p-2 text-slate-600 hover:bg-slate-100 rounded">
             <RefreshCw className="w-5 h-5" />
@@ -604,27 +634,40 @@ const Calculator: React.FC<CalculatorProps> = ({ settings, customers, inventory,
                    {location ? `GPS Captured (${location.accuracy?.toFixed(0)}m acc)` : 'Capture GPS Location'}
                    {location && <Check className="w-4 h-4 ml-1" />}
                  </button>
-                 <label className="flex-1 flex items-center justify-center gap-2 py-3 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer text-slate-600 font-medium text-sm">
-                    <Camera className="w-4 h-4" />
-                    Upload Site Photo
-                    <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                 <label className={`flex-1 flex items-center justify-center gap-2 py-3 border border-slate-200 rounded-lg transition-colors font-medium text-sm ${isUploadingPhoto ? 'bg-slate-100 cursor-wait text-slate-400' : 'hover:bg-slate-50 cursor-pointer text-slate-600'}`}>
+                    {isUploadingPhoto ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Camera className="w-4 h-4" />
+                        Upload Site Photo
+                      </>
+                    )}
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={isUploadingPhoto} />
                  </label>
               </div>
               
               {/* Image Preview */}
               {images.length > 0 && (
                 <div className="md:col-span-2 flex gap-2 overflow-x-auto py-2">
-                  {images.map((img, idx) => (
-                    <div key={idx} className="relative flex-shrink-0 w-24 h-24 rounded-lg overflow-hidden border border-slate-200 shadow-sm group">
-                      <img src={img} alt="Job site" className="w-full h-full object-cover" />
-                      <button 
-                        onClick={() => removeImage(idx)}
-                        className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
+                  {images.map((img, idx) => {
+                    // Use thumbnail for preview if available, fall back to full image
+                    const previewSrc = thumbnails[idx] || img;
+                    return (
+                      <div key={idx} className="relative flex-shrink-0 w-24 h-24 rounded-lg overflow-hidden border border-slate-200 shadow-sm group">
+                        <img src={previewSrc} alt="Job site" className="w-full h-full object-cover" loading="lazy" />
+                        <button 
+                          onClick={() => removeImage(idx)}
+                          className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
