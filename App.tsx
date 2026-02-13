@@ -24,9 +24,10 @@ import CRM from './components/CRM';
 import Inventory from './components/Inventory';
 import Settings from './components/Settings';
 import Auth from './components/Auth';
+import PDFPreviewModal from './components/PDFPreviewModal';
 import { ToastProvider, useToast } from './components/Toast';
 import { NAV_ITEMS } from './constants';
-import { getCustomers, getEstimates, getInventory, getSettings, generatePDF, saveEstimate, saveFullInventory, deleteEstimate, deleteCustomer } from './services/storage';
+import { getCustomers, getEstimates, getInventory, getSettings, saveEstimate, saveFullInventory, deleteEstimate, deleteCustomer } from './services/storage';
 import { DEFAULT_SETTINGS } from './constants';
 import { supabase } from './services/supabaseClient';
 import { JobStatus, Estimate, User, InventoryItem, Customer, AppSettings } from './types';
@@ -76,6 +77,7 @@ const AppContent: React.FC = () => {
   const initialLoadDone = useRef(false);
   const [jobsFilter, setJobsFilter] = useState('All'); // Lifted from JobsList to prevent reset
   const recentOptimisticIds = useRef<Set<string>>(new Set()); // Suppress realtime for recently-updated items
+  const [pdfEstimateId, setPdfEstimateId] = useState<string | null>(null); // PDF modal target
 
   // --- Supabase Auth Listener ---
   useEffect(() => {
@@ -617,7 +619,7 @@ const AppContent: React.FC = () => {
               <Pencil className="w-4 h-4" /> Edit
             </button>
             <button
-              onClick={() => generatePDF(est, customer, settings)}
+              onClick={() => setPdfEstimateId(est.id)}
               className="flex items-center justify-center gap-2 py-3 px-6 rounded-lg border border-slate-200 text-slate-700 font-medium hover:bg-slate-50 transition-colors"
             >
               <FileDown className="w-4 h-4" /> Download PDF
@@ -783,6 +785,15 @@ const AppContent: React.FC = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        setPdfEstimateId(est.id);
+                      }}
+                      className="text-xs text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
+                    >
+                      <FileDown className="w-3 h-3" /> PDF
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
                         handleDeleteEstimate(est);
                       }}
                       className="text-xs text-red-600 hover:text-red-700 font-medium"
@@ -851,6 +862,15 @@ const AppContent: React.FC = () => {
                          <button
                            onClick={(e) => {
                              e.stopPropagation();
+                             setPdfEstimateId(est.id);
+                           }}
+                           className="text-sm text-green-600 hover:underline font-medium"
+                         >
+                           PDF
+                         </button>
+                         <button
+                           onClick={(e) => {
+                             e.stopPropagation();
                              handleDeleteEstimate(est);
                            }}
                            className="text-sm text-red-600 hover:underline font-medium"
@@ -896,7 +916,7 @@ const AppContent: React.FC = () => {
       case 'jobDetail':
         return selectedJobId ? renderJobDetail(selectedJobId) : renderJobsList();
       case 'customers':
-        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} />;
+        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} onGeneratePDF={(id) => setPdfEstimateId(id)} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} />;
       case 'inventory':
         return <Inventory items={inventory} onRefresh={refreshData} onOptimisticUpdate={(updatedItems) => setInventory(updatedItems)} />;
       case 'settings':
@@ -1099,6 +1119,21 @@ const AppContent: React.FC = () => {
            </div>
 
         </main>
+
+        {/* PDF Preview Modal */}
+        {pdfEstimateId && (() => {
+          const pdfEst = estimates.find(e => e.id === pdfEstimateId);
+          if (!pdfEst) return null;
+          const pdfCustomer = customers.find(c => c.id === pdfEst.customerId);
+          return (
+            <PDFPreviewModal
+              estimate={pdfEst}
+              customer={pdfCustomer}
+              settings={settings}
+              onClose={() => setPdfEstimateId(null)}
+            />
+          );
+        })()}
       </div>
   );
 };

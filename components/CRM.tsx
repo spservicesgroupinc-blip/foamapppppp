@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Customer, Estimate, JobStatus } from '../types';
-import { Search, Plus, User, MapPin, Phone, Mail, ArrowLeft, Calendar, FileText, Pencil, Check, ChevronRight, ClipboardList, FileCheck, DollarSign, Archive } from 'lucide-react';
+import { Search, Plus, User, MapPin, Phone, Mail, ArrowLeft, Calendar, FileText, Pencil, Check, ChevronRight, ClipboardList, FileCheck, DollarSign, Archive, FileDown } from 'lucide-react';
 import { saveCustomer } from '../services/storage';
 import { useToast } from './Toast';
 
@@ -12,11 +12,12 @@ interface CRMProps {
   onDeleteCustomer?: (customerId: string) => void;
   onDeleteEstimate?: (estimate: Estimate) => void;
   onStatusChange?: (est: Estimate, newStatus: JobStatus) => void;
+  onGeneratePDF?: (estimateId: string) => void;
   openAddOnLoad?: boolean;
   autoSelectCustomerId?: string;
 }
 
-const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh, onNavigate, onDeleteCustomer, onDeleteEstimate, onStatusChange, openAddOnLoad, autoSelectCustomerId }) => {
+const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh, onNavigate, onDeleteCustomer, onDeleteEstimate, onStatusChange, onGeneratePDF, openAddOnLoad, autoSelectCustomerId }) => {
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -293,6 +294,14 @@ const CRM: React.FC<CRMProps> = ({ customers, estimates: allEstimates, onRefresh
                               className="text-xs text-slate-600 hover:text-slate-700 font-medium"
                             >
                               View
+                            </button>
+                           )}
+                           {onGeneratePDF && (
+                            <button
+                              onClick={() => onGeneratePDF(est.id)}
+                              className="text-xs text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
+                            >
+                              <FileDown className="w-3 h-3" /> PDF
                             </button>
                            )}
                            {onDeleteEstimate && (

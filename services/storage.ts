@@ -421,3 +421,45 @@ export const generatePDF = (estimate: Estimate, customer?: Customer, settings?: 
   console.log("Generating PDF for", estimate.id);
   alert(`PDF Generation Simulation:\n\nEstimate #${estimate.number}\nCustomer: ${customer?.name || 'Unknown'}\nTotal: $${estimate.total.toFixed(2)}\n\n(In a real app, this downloads a PDF file)`);
 };
+
+// =============================================
+// --- Logo Upload (Supabase Storage) ---
+// =============================================
+const LOGOS_BUCKET = 'logos';
+
+export const uploadLogo = async (file: File): Promise<string | null> => {
+  try {
+    const userId = await getUserId();
+    const ext = file.name.split('.').pop() || 'png';
+    const path = `${userId}/logo_${Date.now()}.${ext}`;
+
+    // Remove old logos for this user (best-effort cleanup)
+    try {
+      const { data: existing } = await supabase.storage.from(LOGOS_BUCKET).list(userId);
+      if (existing && existing.length > 0) {
+        const oldPaths = existing.map(f => `${userId}/${f.name}`);
+        await supabase.storage.from(LOGOS_BUCKET).remove(oldPaths);
+      }
+    } catch {
+      // ignore cleanup errors
+    }
+
+    const { error } = await supabase.storage
+      .from(LOGOS_BUCKET)
+      .upload(path, file, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: file.type,
+      });
+    if (error) {
+      console.error('Logo upload error:', error);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage.from(LOGOS_BUCKET).getPublicUrl(path);
+    return urlData?.publicUrl || null;
+  } catch (err) {
+    console.error('uploadLogo error:', err);
+    return null;
+  }
+};
