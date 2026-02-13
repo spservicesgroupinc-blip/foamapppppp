@@ -408,7 +408,7 @@ const AppContent: React.FC = () => {
     showToast('Estimate deleted', 'success');
 
     if (activeView === 'jobDetail' && selectedJobId === estimate.id) {
-      navigateTo('jobs');
+      navigateTo('customers');
     }
 
     refreshData();
@@ -532,7 +532,7 @@ const AppContent: React.FC = () => {
       return (
         <div className="text-center py-16">
           <p className="text-slate-400">Job not found.</p>
-          <button onClick={() => navigateTo('jobs')} className="mt-4 text-brand-600 hover:underline">Back to Jobs</button>
+          <button onClick={() => navigateTo('customers')} className="mt-4 text-brand-600 hover:underline">Back to Customers</button>
         </div>
       );
     }
@@ -563,9 +563,15 @@ const AppContent: React.FC = () => {
 
     return (
       <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in duration-300">
-        {/* Back button */}
-        <button onClick={() => navigateTo('jobs')} className="flex items-center gap-2 text-slate-500 hover:text-brand-600 text-sm">
-          <X className="w-4 h-4" /> Back to Jobs
+        {/* Back button — go to customer profile if we know the customer, else back to customer list */}
+        <button onClick={() => {
+          if (customer) {
+            navigateTo('customers', { customerId: customer.id });
+          } else {
+            navigateTo('customers');
+          }
+        }} className="flex items-center gap-2 text-slate-500 hover:text-brand-600 text-sm">
+          <ArrowLeft className="w-4 h-4" /> {customer ? `Back to ${customer.name}` : 'Back to Customers'}
         </button>
 
         {/* Header */}
@@ -645,7 +651,7 @@ const AppContent: React.FC = () => {
             </button>
             {est.status === JobStatus.PAID && (
               <button
-                onClick={() => { handleStatusChange(est, JobStatus.ARCHIVED); navigateTo('jobs'); }}
+                onClick={() => { handleStatusChange(est, JobStatus.ARCHIVED); if (customer) navigateTo('customers', { customerId: customer.id }); else navigateTo('customers'); }}
                 className="flex items-center justify-center gap-2 py-3 px-6 rounded-lg border border-slate-200 text-slate-500 font-medium hover:bg-slate-50 transition-colors"
               >
                 Archive Job
@@ -724,189 +730,6 @@ const AppContent: React.FC = () => {
     );
   };
 
-  // --- Job List (render function, NOT a component — avoids unmount/remount + preserves filter state) ---
-  const renderJobsList = () => {
-    const filteredEstimates = estimates.filter(e => {
-        if (jobsFilter === 'All') return true;
-        return e.status === jobsFilter;
-    });
-
-    return (
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-             <h2 className="text-2xl font-bold text-slate-900">Jobs & Estimates</h2>
-             <select 
-               className="w-full sm:w-auto p-2 border rounded-lg bg-white"
-               value={jobsFilter}
-               onChange={(e) => setJobsFilter(e.target.value)}
-             >
-               <option value="All">All Jobs</option>
-               <option value={JobStatus.DRAFT}>Drafts</option>
-               <option value={JobStatus.WORK_ORDER}>Work Orders</option>
-               <option value={JobStatus.INVOICED}>Invoices</option>
-               <option value={JobStatus.PAID}>Paid</option>
-               <option value={JobStatus.ARCHIVED}>Archived</option>
-             </select>
-        </div>
-        
-        {/* Mobile View: Cards */}
-        <div className="md:hidden space-y-4">
-          {filteredEstimates.map(est => {
-             const customer = customers.find(c => c.id === est.customerId);
-             return (
-               <div key={est.id}
-                 onClick={() => navigateTo('jobDetail', { jobId: est.id })}
-                 className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 cursor-pointer hover:border-brand-200 hover:shadow-md transition-all active:scale-[0.99]"
-               >
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <span className="font-mono text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{est.number}</span>
-                      <h3 className="font-bold text-slate-900 mt-1">{customer?.name || 'Unknown'}</h3>
-                      <p className="text-xs text-slate-500">{new Date(est.date).toLocaleDateString()}</p>
-                    </div>
-                    <div className="text-right">
-                       <p className="font-bold text-slate-900">${est.total.toLocaleString()}</p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-between items-center pt-3 border-t border-slate-50">
-                     <span className={`text-xs rounded-full px-2.5 py-1 font-medium
-                          ${est.status === JobStatus.PAID ? 'bg-green-50 text-green-700' : 
-                            est.status === JobStatus.WORK_ORDER ? 'bg-orange-50 text-orange-700' :
-                            est.status === JobStatus.INVOICED ? 'bg-blue-50 text-blue-700' :
-                            'bg-slate-50 text-slate-700'}`}
-                      >
-                          {est.status}
-                      </span>
-                      <span className="text-xs text-brand-600 font-medium">View Details →</span>
-                  </div>
-                  {est.inventoryDeducted && (
-                     <div className="mt-2 text-[10px] text-green-600 flex items-center gap-1 bg-green-50 p-1 rounded w-fit">
-                       <Package className="w-3 h-3"/> Inventory Allocated
-                     </div>
-                  )}
-                  <div className="mt-3 pt-3 border-t border-slate-100 flex justify-end gap-3">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigateTo('calculator', { editEstimateId: est.id });
-                      }}
-                      className="text-xs text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1"
-                    >
-                      <Pencil className="w-3 h-3" /> Edit
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPdfDocumentType(statusToDocumentType(est.status));
-                        setPdfEstimateId(est.id);
-                      }}
-                      className="text-xs text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
-                    >
-                      <FileDown className="w-3 h-3" /> PDF
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteEstimate(est);
-                      }}
-                      className="text-xs text-red-600 hover:text-red-700 font-medium"
-                    >
-                      Delete
-                    </button>
-                  </div>
-               </div>
-             );
-          })}
-          {filteredEstimates.length === 0 && (
-              <div className="text-center py-10 text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">No jobs found.</div>
-          )}
-        </div>
-
-        {/* Desktop View: Table */}
-        <div className="hidden md:block bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-             <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-500 uppercase text-xs">
-                <tr>
-                  <th className="px-6 py-4">Ref #</th>
-                  <th className="px-6 py-4">Customer</th>
-                  <th className="px-6 py-4">Date</th>
-                  <th className="px-6 py-4">Total</th>
-                  <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredEstimates.map(est => {
-                  const customer = customers.find(c => c.id === est.customerId);
-                  return (
-                  <tr key={est.id} className="hover:bg-slate-50 cursor-pointer transition-colors" onClick={() => navigateTo('jobDetail', { jobId: est.id })}>
-                    <td className="px-6 py-4 font-mono text-slate-600">{est.number}</td>
-                    <td className="px-6 py-4 font-medium text-slate-900">{customer?.name || 'Unknown'}</td>
-                    <td className="px-6 py-4 text-slate-600">{new Date(est.date).toLocaleDateString()}</td>
-                    <td className="px-6 py-4 font-medium text-slate-900">
-                      ${est.total.toLocaleString()}
-                      {est.inventoryDeducted && (
-                         <div className="text-[10px] text-green-600 flex items-center gap-1 mt-1">
-                           <Package className="w-3 h-3"/> Allocated
-                         </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                        <span className={`text-xs rounded-full px-2.5 py-1 font-medium
-                          ${est.status === JobStatus.PAID ? 'bg-green-50 text-green-700' :
-                            est.status === JobStatus.WORK_ORDER ? 'bg-orange-50 text-orange-700' :
-                            est.status === JobStatus.INVOICED ? 'bg-blue-50 text-blue-700' :
-                            'bg-slate-50 text-slate-700'}`}
-                        >
-                            {est.status}
-                        </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                       <div className="flex items-center justify-end gap-3">
-                         <button
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             navigateTo('calculator', { editEstimateId: est.id });
-                           }}
-                           className="text-sm text-brand-600 hover:underline font-medium"
-                         >
-                           Edit
-                         </button>
-                         <button
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             setPdfDocumentType(statusToDocumentType(est.status));
-                             setPdfEstimateId(est.id);
-                           }}
-                           className="text-sm text-green-600 hover:underline font-medium"
-                         >
-                           PDF
-                         </button>
-                         <button
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             handleDeleteEstimate(est);
-                           }}
-                           className="text-sm text-red-600 hover:underline font-medium"
-                         >
-                           Delete
-                         </button>
-                         <span className="text-sm text-slate-500 font-medium hover:underline">View →</span>
-                       </div>
-                    </td>
-                  </tr>
-                )})}
-                {filteredEstimates.length === 0 && (
-                    <tr><td colSpan={6} className="text-center py-8 text-slate-400">No jobs found matching this filter.</td></tr>
-                )}
-              </tbody>
-            </table>
-        </div>
-      </div>
-    );
-  };
-
   // --- Render Active View ---
   const renderContent = () => {
     switch (activeView) {
@@ -922,16 +745,15 @@ const AppContent: React.FC = () => {
           } else if (savedId) {
             navigateTo('jobDetail', { jobId: savedId });
           } else {
-            navigateTo('jobs');
+            navigateTo('customers');
           }
         }} onRefresh={refreshData} />;
       }
       case 'jobs':
-        return renderJobsList();
-      case 'jobDetail':
-        return selectedJobId ? renderJobDetail(selectedJobId) : renderJobsList();
       case 'customers':
-        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} onGeneratePDF={(id) => { const est = estimates.find(e => e.id === id); if (est) setPdfDocumentType(statusToDocumentType(est.status)); setPdfEstimateId(id); }} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} />;
+        return <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} onGeneratePDF={(id) => { const est = estimates.find(e => e.id === id); if (est) setPdfDocumentType(statusToDocumentType(est.status)); setPdfEstimateId(id); }} openAddOnLoad={openCustomerAdd} autoSelectCustomerId={preSelectedCustomerId || undefined} initialTab={activeView === 'jobs' ? 'jobs' : 'customers'} jobsFilter={jobsFilter} onJobsFilterChange={setJobsFilter} />;
+      case 'jobDetail':
+        return selectedJobId ? renderJobDetail(selectedJobId) : <CRM customers={customers} estimates={estimates} onRefresh={refreshData} onNavigate={navigateTo} onDeleteCustomer={handleDeleteCustomer} onDeleteEstimate={handleDeleteEstimate} onStatusChange={handleStatusChange} onGeneratePDF={(id) => { const est = estimates.find(e => e.id === id); if (est) setPdfDocumentType(statusToDocumentType(est.status)); setPdfEstimateId(id); }} openAddOnLoad={false} initialTab="customers" jobsFilter={jobsFilter} onJobsFilterChange={setJobsFilter} />;
       case 'inventory':
         return <Inventory items={inventory} onRefresh={refreshData} onOptimisticUpdate={(updatedItems) => setInventory(updatedItems)} />;
       case 'settings':
@@ -1011,12 +833,15 @@ const AppContent: React.FC = () => {
                 <Plus className="w-5 h-5" /> New Estimate
               </button>
             </div>
-            {NAV_ITEMS.map(item => (
+            {NAV_ITEMS.map(item => {
+              const isActive = activeView === item.id || 
+                (item.id === 'customers' && (activeView === 'jobs' || activeView === 'jobDetail'));
+              return (
               <button
                 key={item.id}
                 onClick={() => navigateTo(item.id)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors group relative
-                  ${activeView === item.id 
+                  ${isActive
                     ? 'bg-slate-800 text-white border-l-4 border-brand-500' 
                     : 'text-slate-400 hover:text-white hover:bg-slate-800'
                   }
@@ -1025,7 +850,7 @@ const AppContent: React.FC = () => {
                 {IconComponent(item.icon)}
                 {item.label}
               </button>
-            ))}
+            )})}
           </nav>
 
           <div className="absolute bottom-0 w-full p-4 border-t border-slate-800 bg-slate-900">
@@ -1096,17 +921,17 @@ const AppContent: React.FC = () => {
 
            {/* Mobile Bottom Navigation Bar */}
            <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
-              <div className="grid grid-cols-5 h-16 items-center">
+              <div className="grid grid-cols-4 h-16 items-center">
                  {/* 1. Dashboard */}
                  <button onClick={() => navigateTo('dashboard')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'dashboard' ? 'text-brand-600' : 'text-slate-400'}`}>
                     <LayoutDashboard className="w-6 h-6" />
                     <span className="text-[10px] font-medium">Home</span>
                  </button>
 
-                 {/* 2. Jobs */}
-                 <button onClick={() => navigateTo('jobs')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'jobs' || activeView === 'jobDetail' ? 'text-brand-600' : 'text-slate-400'}`}>
-                    <FileText className="w-6 h-6" />
-                    <span className="text-[10px] font-medium">Jobs</span>
+                 {/* 2. Customers & Jobs (merged) */}
+                 <button onClick={() => navigateTo('customers')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'customers' || activeView === 'jobs' || activeView === 'jobDetail' ? 'text-brand-600' : 'text-slate-400'}`}>
+                    <Users className="w-6 h-6" />
+                    <span className="text-[10px] font-medium">Customers</span>
                  </button>
 
                  {/* 3. Center PLUS Button */}
@@ -1119,13 +944,7 @@ const AppContent: React.FC = () => {
                     </button>
                  </div>
 
-                 {/* 4. Customers */}
-                 <button onClick={() => navigateTo('customers')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'customers' ? 'text-brand-600' : 'text-slate-400'}`}>
-                    <Users className="w-6 h-6" />
-                    <span className="text-[10px] font-medium">CRM</span>
-                 </button>
-
-                 {/* 5. Inventory */}
+                 {/* 4. Inventory */}
                  <button onClick={() => navigateTo('inventory')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'inventory' ? 'text-brand-600' : 'text-slate-400'}`}>
                     <Package className="w-6 h-6" />
                     <span className="text-[10px] font-medium">Stock</span>

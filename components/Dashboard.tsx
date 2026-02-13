@@ -108,13 +108,13 @@ const Dashboard: React.FC<DashboardProps> = ({ estimates, inventory, onNavigate 
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-5 border-b border-slate-100 flex justify-between items-center">
             <h3 className="font-semibold text-slate-800">Recent Activity</h3>
-            <button onClick={() => onNavigate('jobs')} className="text-sm text-brand-600 hover:text-brand-700">View All</button>
+            <button onClick={() => onNavigate('jobs')} className="text-sm text-brand-600 hover:text-brand-700">View All Jobs</button>
           </div>
           
           {/* Mobile List View */}
           <div className="md:hidden divide-y divide-slate-100">
              {estimates.slice(0, 5).map((est) => (
-                <div key={est.id} className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => onNavigate('jobDetail', { jobId: est.id })}>
+                <div key={est.id} className="p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => onNavigate('jobDetail', { jobId: est.id, customerId: est.customerId })}>
                    <div>
                       <p className="font-bold text-slate-900">{est.jobName}</p>
                       <p className="text-xs text-slate-500">{new Date(est.date).toLocaleDateString()} • {est.number}</p>
@@ -148,7 +148,7 @@ const Dashboard: React.FC<DashboardProps> = ({ estimates, inventory, onNavigate 
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {estimates.slice(0, 5).map((est) => (
-                  <tr key={est.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => onNavigate('jobDetail', { jobId: est.id })}>
+                  <tr key={est.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => onNavigate('jobDetail', { jobId: est.id, customerId: est.customerId })}>
                     <td className="px-5 py-3 font-medium text-slate-900">{est.number}</td>
                     <td className="px-5 py-3">{est.jobName}</td>
                     <td className="px-5 py-3">{new Date(est.date).toLocaleDateString()}</td>

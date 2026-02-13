@@ -24,8 +24,7 @@ export const INITIAL_INVENTORY: InventoryItem[] = [
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
   { id: 'calculator', label: 'New Estimate', icon: 'Calculator' },
-  { id: 'jobs', label: 'Jobs & Estimates', icon: 'FileText' },
-  { id: 'customers', label: 'Customers', icon: 'Users' },
+  { id: 'customers', label: 'Customers & Jobs', icon: 'Users' },
   { id: 'inventory', label: 'Inventory', icon: 'Package' },
   { id: 'settings', label: 'Settings', icon: 'Settings' },
 ];
