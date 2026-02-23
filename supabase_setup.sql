@@ -279,11 +279,12 @@ SET
   file_size_limit = EXCLUDED.file_size_limit,
   allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Storage policies (bucket-scoped)
+-- Storage policies (bucket-scoped, tenant-isolated)
 DROP POLICY IF EXISTS "job_photos_select_public" ON storage.objects;
-CREATE POLICY "job_photos_select_public"
-ON storage.objects FOR SELECT TO public
-USING (bucket_id = 'job-photos');
+DROP POLICY IF EXISTS "job_photos_select_own" ON storage.objects;
+CREATE POLICY "job_photos_select_own"
+ON storage.objects FOR SELECT TO authenticated
+USING (bucket_id = 'job-photos' AND (storage.foldername(name))[1] = auth.uid()::text);
 
 DROP POLICY IF EXISTS "job_photos_insert_own" ON storage.objects;
 CREATE POLICY "job_photos_insert_own"
@@ -302,9 +303,10 @@ ON storage.objects FOR DELETE TO authenticated
 USING (bucket_id = 'job-photos' AND (storage.foldername(name))[1] = auth.uid()::text);
 
 DROP POLICY IF EXISTS "saved_pdfs_select_public" ON storage.objects;
-CREATE POLICY "saved_pdfs_select_public"
-ON storage.objects FOR SELECT TO public
-USING (bucket_id = 'saved-pdfs');
+DROP POLICY IF EXISTS "saved_pdfs_select_own" ON storage.objects;
+CREATE POLICY "saved_pdfs_select_own"
+ON storage.objects FOR SELECT TO authenticated
+USING (bucket_id = 'saved-pdfs' AND (storage.foldername(name))[1] = auth.uid()::text);
 
 DROP POLICY IF EXISTS "saved_pdfs_insert_own" ON storage.objects;
 CREATE POLICY "saved_pdfs_insert_own"
@@ -344,7 +346,125 @@ ON storage.objects FOR DELETE TO authenticated
 USING (bucket_id = 'logos' AND (storage.foldername(name))[1] = auth.uid()::text);
 
 -- --------------------------------------------------
--- 7) Realtime publication
+-- 7) Cross-Tenant FK Validation (Multi-Tenant SaaS)
+-- --------------------------------------------------
+
+-- Prevent user from referencing another tenant's customers in estimates
+CREATE OR REPLACE FUNCTION public.validate_estimate_customer_ownership()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.customer_id IS NULL THEN RETURN NEW; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.customers WHERE id = NEW.customer_id AND user_id = NEW.user_id
+  ) THEN
+    RAISE EXCEPTION 'Cross-tenant violation: customer_id % does not belong to user %', NEW.customer_id, NEW.user_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_validate_estimate_customer ON public.estimates;
+CREATE TRIGGER trg_validate_estimate_customer
+BEFORE INSERT OR UPDATE ON public.estimates
+FOR EACH ROW EXECUTE FUNCTION public.validate_estimate_customer_ownership();
+
+-- Prevent user from referencing another tenant's estimates in saved_pdfs
+CREATE OR REPLACE FUNCTION public.validate_pdf_estimate_ownership()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.estimates WHERE id = NEW.estimate_id AND user_id = NEW.user_id
+  ) THEN
+    RAISE EXCEPTION 'Cross-tenant violation: estimate_id % does not belong to user %', NEW.estimate_id, NEW.user_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_validate_pdf_estimate ON public.saved_pdfs;
+CREATE TRIGGER trg_validate_pdf_estimate
+BEFORE INSERT OR UPDATE ON public.saved_pdfs
+FOR EACH ROW EXECUTE FUNCTION public.validate_pdf_estimate_ownership();
+
+-- Unique estimate number per tenant
+CREATE UNIQUE INDEX IF NOT EXISTS idx_estimates_user_number_unique
+ON public.estimates (user_id, number) WHERE number IS NOT NULL AND number != '';
+
+-- --------------------------------------------------
+-- 8) Audit tracking (last_modified_by)
+-- --------------------------------------------------
+ALTER TABLE public.estimates ADD COLUMN IF NOT EXISTS last_modified_by uuid REFERENCES auth.users(id);
+ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS last_modified_by uuid REFERENCES auth.users(id);
+ALTER TABLE public.inventory ADD COLUMN IF NOT EXISTS last_modified_by uuid REFERENCES auth.users(id);
+
+CREATE OR REPLACE FUNCTION public.set_modified_by()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  NEW.last_modified_by = auth.uid();
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_customers_set_modified_by ON public.customers;
+CREATE TRIGGER trg_customers_set_modified_by
+BEFORE INSERT OR UPDATE ON public.customers FOR EACH ROW EXECUTE FUNCTION public.set_modified_by();
+
+DROP TRIGGER IF EXISTS trg_estimates_set_modified_by ON public.estimates;
+CREATE TRIGGER trg_estimates_set_modified_by
+BEFORE INSERT OR UPDATE ON public.estimates FOR EACH ROW EXECUTE FUNCTION public.set_modified_by();
+
+DROP TRIGGER IF EXISTS trg_inventory_set_modified_by ON public.inventory;
+CREATE TRIGGER trg_inventory_set_modified_by
+BEFORE INSERT OR UPDATE ON public.inventory FOR EACH ROW EXECUTE FUNCTION public.set_modified_by();
+
+-- --------------------------------------------------
+-- 9) Multi-tenant query indexes
+-- --------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_estimates_user_status ON public.estimates(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_estimates_user_date ON public.estimates(user_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_customers_user_name ON public.customers(user_id, name);
+CREATE INDEX IF NOT EXISTS idx_saved_pdfs_user_created ON public.saved_pdfs(user_id, created_at DESC);
+
+-- --------------------------------------------------
+-- 10) Replica identity for realtime DELETE payloads
+-- --------------------------------------------------
+ALTER TABLE public.customers REPLICA IDENTITY FULL;
+ALTER TABLE public.estimates REPLICA IDENTITY FULL;
+ALTER TABLE public.inventory REPLICA IDENTITY FULL;
+ALTER TABLE public.settings REPLICA IDENTITY FULL;
+ALTER TABLE public.saved_pdfs REPLICA IDENTITY FULL;
+
+-- --------------------------------------------------
+-- 11) Tenant stats admin view (service_role only)
+-- --------------------------------------------------
+CREATE OR REPLACE VIEW public.tenant_stats AS
+SELECT
+  u.id as user_id,
+  u.email,
+  u.created_at as signed_up_at,
+  (SELECT count(*) FROM public.customers c WHERE c.user_id = u.id) as customer_count,
+  (SELECT count(*) FROM public.estimates e WHERE e.user_id = u.id) as estimate_count,
+  (SELECT count(*) FROM public.inventory i WHERE i.user_id = u.id) as inventory_count,
+  (SELECT count(*) FROM public.saved_pdfs p WHERE p.user_id = u.id) as pdf_count,
+  (SELECT coalesce(sum(e.total), 0) FROM public.estimates e WHERE e.user_id = u.id AND e.status = 'Paid') as total_revenue
+FROM auth.users u ORDER BY u.created_at DESC;
+
+REVOKE ALL ON public.tenant_stats FROM anon, authenticated;
+
+-- --------------------------------------------------
+-- 12) Realtime publication
 -- --------------------------------------------------
 DO $$
 BEGIN
