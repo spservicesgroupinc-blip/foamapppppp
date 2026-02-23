@@ -23,12 +23,16 @@ import Inventory from './components/Inventory';
 import Settings from './components/Settings';
 import Auth from './components/Auth';
 import PDFPreviewModal from './components/PDFPreviewModal';
+import EmployeeManager from './components/EmployeeManager';
+import RigManager from './components/RigManager';
+import EmployeePortal, { AssignmentPanel } from './components/EmployeePortal';
 import { ToastProvider, useToast } from './components/Toast';
-import { NAV_ITEMS } from './constants';
+import { NAV_ITEMS, EMPLOYEE_NAV_ITEMS } from './constants';
 import { getCustomers, getEstimates, getInventory, getSettings, saveEstimate, saveFullInventory, deleteEstimate, deleteCustomer } from './services/storage';
+import { ensureProfile } from './services/employeeRigService';
 import { DEFAULT_SETTINGS } from './constants';
 import { supabase } from './services/supabaseClient';
-import { JobStatus, Estimate, User, InventoryItem, Customer, AppSettings, DocumentType, statusToDocumentType } from './types';
+import { JobStatus, Estimate, User, InventoryItem, Customer, AppSettings, DocumentType, statusToDocumentType, UserProfile } from './types';
 import type { Session } from '@supabase/supabase-js';
 
 // Wrapper to use the hook

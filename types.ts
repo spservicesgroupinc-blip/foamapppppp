@@ -155,4 +155,86 @@ export interface User {
   username: string;
   company: string;
   isAuthenticated: boolean;
+  role: 'admin' | 'employee';
+  companyId: string; // admin's user_id (for employees, this is their admin's id)
+}
+
+// --- Employee / Rig / Assignment Types ---
+
+export type EmployeeRole = 'Crew Lead' | 'Crew Member' | 'Foreman' | 'Apprentice' | 'Driver';
+
+export interface Employee {
+  id: string;
+  userId: string;          // admin who owns this employee
+  authUserId?: string;     // linked Supabase auth account
+  name: string;
+  email: string;
+  phone: string;
+  role: EmployeeRole | string;
+  hourlyRate: number;
+  isActive: boolean;
+  notes?: string;
+  createdAt: string;
+}
+
+export type RigStatus = 'active' | 'maintenance' | 'retired';
+
+export interface Rig {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  vin?: string;
+  licensePlate?: string;
+  year?: number;
+  make?: string;
+  model?: string;
+  status: RigStatus;
+  notes?: string;
+  createdAt: string;
+}
+
+export type AssignmentStatus = 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+
+export interface WorkOrderAssignment {
+  id: string;
+  userId: string;
+  estimateId: string;
+  rigId?: string;
+  assignedEmployeeIds: string[];
+  scheduledDate?: string;
+  scheduledTime?: string;
+  status: AssignmentStatus;
+  employeeNotes?: string;
+  adminNotes?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  // Joined fields (from view)
+  estimateNumber?: string;
+  jobName?: string;
+  jobAddress?: string;
+  jobStatus?: string;
+  rigName?: string;
+  customerName?: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  customerCity?: string;
+  customerState?: string;
+  customerZip?: string;
+  calcData?: CalculationData;
+  items?: JobItem[];
+  total?: number;
+  totalBoardFeetOpen?: number;
+  totalBoardFeetClosed?: number;
+  setsRequiredOpen?: number;
+  setsRequiredClosed?: number;
+}
+
+export interface UserProfile {
+  id: string;
+  role: 'admin' | 'employee';
+  companyId: string;
+  displayName?: string;
+  phone?: string;
 }
