@@ -26,5 +26,14 @@ export const NAV_ITEMS = [
   { id: 'calculator', label: 'New Estimate', icon: 'Calculator' },
   { id: 'customers', label: 'Customers & Jobs', icon: 'Users' },
   { id: 'inventory', label: 'Inventory', icon: 'Package' },
+  { id: 'employees', label: 'Employees', icon: 'HardHat' },
+  { id: 'rigs', label: 'Spray Rigs', icon: 'Truck' },
+  { id: 'assignments', label: 'Assignments', icon: 'ClipboardList' },
+  { id: 'settings', label: 'Settings', icon: 'Settings' },
+];
+
+// Navigation items shown to employees (limited view)
+export const EMPLOYEE_NAV_ITEMS = [
+  { id: 'myJobs', label: 'My Jobs', icon: 'ClipboardList' },
   { id: 'settings', label: 'Settings', icon: 'Settings' },
 ];

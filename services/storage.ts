@@ -17,6 +17,8 @@ export const getUser = async (): Promise<User | null> => {
     username: session.user.email || '',
     company: session.user.user_metadata?.company || 'My Spray Foam Co',
     isAuthenticated: true,
+    role: 'admin',
+    companyId: session.user.id,
   };
 };
 

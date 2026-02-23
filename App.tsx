@@ -14,7 +14,10 @@ import {
   Check,
   ArrowLeft,
   Pencil,
-  RefreshCw
+  RefreshCw,
+  HardHat,
+  Truck,
+  ClipboardList
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Calculator from './components/Calculator';
@@ -42,6 +45,7 @@ const AppContent: React.FC = () => {
   // --- Data State ---
   const [activeView, setActiveView] = useState('dashboard');
   const [showQuickActions, setShowQuickActions] = useState(false);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   // Navigation Context
   const [preSelectedCustomerId, setPreSelectedCustomerId] = useState<string | null>(null);
@@ -85,31 +89,66 @@ const AppContent: React.FC = () => {
   // --- Supabase Auth Listener ---
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       if (session?.user) {
-        setUser({
-          username: session.user.email || '',
-          company: session.user.user_metadata?.company || 'My Spray Foam Co',
-          isAuthenticated: true,
-        });
+        // Ensure profile exists and get role info
+        try {
+          const profile = await ensureProfile();
+          setUserProfile(profile);
+          setUser({
+            username: session.user.email || '',
+            company: session.user.user_metadata?.company || 'My Spray Foam Co',
+            isAuthenticated: true,
+            role: profile.role || 'admin',
+            companyId: profile.companyId || session.user.id,
+          });
+          // Employees start on their jobs view
+          if (profile.role === 'employee') {
+            setActiveView('myJobs');
+          }
+        } catch {
+          setUser({
+            username: session.user.email || '',
+            company: session.user.user_metadata?.company || 'My Spray Foam Co',
+            isAuthenticated: true,
+            role: 'admin',
+            companyId: session.user.id,
+          });
+        }
       } else {
         setUser(null);
+        setUserProfile(null);
       }
       setAuthLoading(false);
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       if (session?.user) {
-        setUser({
-          username: session.user.email || '',
-          company: session.user.user_metadata?.company || 'My Spray Foam Co',
-          isAuthenticated: true,
-        });
+        try {
+          const profile = await ensureProfile();
+          setUserProfile(profile);
+          setUser({
+            username: session.user.email || '',
+            company: session.user.user_metadata?.company || 'My Spray Foam Co',
+            isAuthenticated: true,
+            role: profile.role || 'admin',
+            companyId: profile.companyId || session.user.id,
+          });
+        } catch {
+          setUser({
+            username: session.user.email || '',
+            company: session.user.user_metadata?.company || 'My Spray Foam Co',
+            isAuthenticated: true,
+            role: 'admin',
+            companyId: session.user.id,
+          });
+        }
       } else {
         setUser(null);
+        setUserProfile(null);
       }
     });
 
@@ -760,6 +799,72 @@ const AppContent: React.FC = () => {
         return <Inventory items={inventory} onRefresh={refreshData} onOptimisticUpdate={(updatedItems) => setInventory(updatedItems)} />;
       case 'settings':
         return <Settings settings={settings} onSave={refreshData} installPrompt={deferredPrompt} onInstall={handleInstallClick} />;
+      case 'employees':
+        return (
+          <div className="space-y-4">
+            {/* Crew Section Tabs (for mobile navigation between sub-views) */}
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-1 lg:hidden">
+              {[
+                { id: 'employees', label: 'Employees' },
+                { id: 'rigs', label: 'Rigs' },
+                { id: 'assignments', label: 'Assignments' },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => navigateTo(tab.id)}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors ${activeView === tab.id ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <EmployeeManager onRefresh={refreshData} />
+          </div>
+        );
+      case 'rigs':
+        return (
+          <div className="space-y-4">
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-1 lg:hidden">
+              {[
+                { id: 'employees', label: 'Employees' },
+                { id: 'rigs', label: 'Rigs' },
+                { id: 'assignments', label: 'Assignments' },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => navigateTo(tab.id)}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors ${activeView === tab.id ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <RigManager onRefresh={refreshData} />
+          </div>
+        );
+      case 'assignments':
+        return (
+          <div className="space-y-4">
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-1 lg:hidden">
+              {[
+                { id: 'employees', label: 'Employees' },
+                { id: 'rigs', label: 'Rigs' },
+                { id: 'assignments', label: 'Assignments' },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => navigateTo(tab.id)}
+                  className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition-colors ${activeView === tab.id ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <AssignmentPanel estimates={estimates} customers={customers} onRefresh={refreshData} />
+          </div>
+        );
+      case 'myJobs':
+        return <EmployeePortal userRole={user?.role || 'employee'} />;
       default:
         return <Dashboard estimates={estimates} inventory={inventory} onNavigate={navigateTo} />;
     }
@@ -773,6 +878,9 @@ const AppContent: React.FC = () => {
       case 'Users': return <Users className={className} />;
       case 'Package': return <Package className={className} />;
       case 'Settings': return <SettingsIcon className={className} />;
+      case 'HardHat': return <HardHat className={className} />;
+      case 'Truck': return <Truck className={className} />;
+      case 'ClipboardList': return <ClipboardList className={className} />;
       default: return <LayoutDashboard className={className} />;
     }
   };
@@ -817,6 +925,9 @@ const AppContent: React.FC = () => {
     );
   }
 
+  const isEmployee = user?.role === 'employee';
+  const navItems = isEmployee ? EMPLOYEE_NAV_ITEMS : NAV_ITEMS;
+
   return (
       <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900">
         
@@ -827,15 +938,17 @@ const AppContent: React.FC = () => {
           </div>
 
           <nav className="p-4 space-y-1">
-            <div className="mb-4">
-              <button 
-                onClick={() => navigateTo('calculator')}
-                className="w-full bg-brand-600 hover:bg-brand-500 text-white py-3 px-4 rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg shadow-brand-900/50 transition-all"
-              >
-                <Plus className="w-5 h-5" /> New Estimate
-              </button>
-            </div>
-            {NAV_ITEMS.map(item => {
+            {!isEmployee && (
+              <div className="mb-4">
+                <button 
+                  onClick={() => navigateTo('calculator')}
+                  className="w-full bg-brand-600 hover:bg-brand-500 text-white py-3 px-4 rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg shadow-brand-900/50 transition-all"
+                >
+                  <Plus className="w-5 h-5" /> New Estimate
+                </button>
+              </div>
+            )}
+            {navItems.map(item => {
               const isActive = activeView === item.id || 
                 (item.id === 'customers' && (activeView === 'jobs' || activeView === 'jobDetail'));
               return (
@@ -941,7 +1054,25 @@ const AppContent: React.FC = () => {
 
            {/* Mobile Bottom Navigation Bar */}
            <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 pb-safe z-40 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
-              <div className="grid grid-cols-4 h-16 items-center">
+              {isEmployee ? (
+                /* Employee mobile nav — simplified */
+                <div className="grid grid-cols-3 h-16 items-center">
+                  <button onClick={() => navigateTo('myJobs')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'myJobs' ? 'text-brand-600' : 'text-slate-400'}`}>
+                    <ClipboardList className="w-6 h-6" />
+                    <span className="text-[10px] font-medium">My Jobs</span>
+                  </button>
+                  <button onClick={() => navigateTo('settings')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'settings' ? 'text-brand-600' : 'text-slate-400'}`}>
+                    <SettingsIcon className="w-6 h-6" />
+                    <span className="text-[10px] font-medium">Settings</span>
+                  </button>
+                  <button onClick={() => { supabase.auth.signOut(); }} className="flex flex-col items-center justify-center h-full space-y-1 text-slate-400">
+                    <ArrowLeft className="w-6 h-6" />
+                    <span className="text-[10px] font-medium">Sign Out</span>
+                  </button>
+                </div>
+              ) : (
+                /* Admin mobile nav */
+                <div className="grid grid-cols-5 h-16 items-center">
                  {/* 1. Dashboard */}
                  <button onClick={() => navigateTo('dashboard')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'dashboard' ? 'text-brand-600' : 'text-slate-400'}`}>
                     <LayoutDashboard className="w-6 h-6" />
@@ -951,7 +1082,7 @@ const AppContent: React.FC = () => {
                  {/* 2. Customers & Jobs (merged) */}
                  <button onClick={() => navigateTo('customers')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'customers' || activeView === 'jobs' || activeView === 'jobDetail' ? 'text-brand-600' : 'text-slate-400'}`}>
                     <Users className="w-6 h-6" />
-                    <span className="text-[10px] font-medium">Customers</span>
+                    <span className="text-[10px] font-medium">CRM</span>
                  </button>
 
                  {/* 3. Center PLUS Button */}
@@ -964,12 +1095,19 @@ const AppContent: React.FC = () => {
                     </button>
                  </div>
 
-                 {/* 4. Inventory */}
+                 {/* 4. Crew (employees + rigs + assignments) */}
+                 <button onClick={() => navigateTo('employees')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'employees' || activeView === 'rigs' || activeView === 'assignments' ? 'text-brand-600' : 'text-slate-400'}`}>
+                    <HardHat className="w-6 h-6" />
+                    <span className="text-[10px] font-medium">Crew</span>
+                 </button>
+
+                 {/* 5. Inventory */}
                  <button onClick={() => navigateTo('inventory')} className={`flex flex-col items-center justify-center h-full space-y-1 ${activeView === 'inventory' ? 'text-brand-600' : 'text-slate-400'}`}>
                     <Package className="w-6 h-6" />
                     <span className="text-[10px] font-medium">Stock</span>
                  </button>
-              </div>
+                </div>
+              )}
            </div>
 
         </main>
